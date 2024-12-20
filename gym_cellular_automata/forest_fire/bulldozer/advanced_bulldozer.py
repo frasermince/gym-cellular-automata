@@ -10,15 +10,90 @@ from gym_cellular_automata.forest_fire.operators import (
     Move,
     MoveModify,
     RepeatCA,
-    WindyForestFire,
+    PartiallyObservableForestFire,
 )
 from gym_cellular_automata.grid_space import GridSpace
 from gym_cellular_automata.operator import Operator
 
 from .utils.render import render
 
+import math
 
-class ForestFireBulldozerEnv(CAEnv):
+
+def init_vegetation(row_count, column_count):
+    veg_matrix = np.zeros((row_count, column_count), dtype=int)
+    veg_matrix[:, : column_count // 3] = 1
+    veg_matrix[:, column_count // 3 : 2 * column_count // 3] = 2
+    veg_matrix[:, 2 * column_count // 3 :] = 3
+    return veg_matrix
+
+
+def init_density(row_count, column_count):
+    den_matrix = np.zeros((row_count, column_count), dtype=int)
+    den_matrix[:, : column_count // 3] = 1
+    den_matrix[:, column_count // 3 : 2 * column_count // 3] = 2
+    den_matrix[:, 2 * column_count // 3 :] = 3
+    return den_matrix
+
+
+def init_altitude(row_count, column_count):
+    return np.tile(np.arange(column_count), (row_count, 1))
+
+
+def tg(x):
+    return math.degrees(math.atan(x))
+
+
+def get_slope(altitude, row_count, column_count):
+    # Convert to numpy array if not already
+
+    # Initialize slope matrix with 3x3 sub-matrices of zeros
+    slope_matrix = np.zeros((row_count, column_count, 3, 3))
+
+    # Skip edges since they remain flat (all zeros)
+    for row in range(1, row_count - 1):
+        for col in range(1, column_count - 1):
+            # Get 3x3 neighborhood of altitudes
+            neighborhood = altitude[row - 1 : row + 2, col - 1 : col + 2]
+            current = altitude[row, col]
+
+            # Calculate slopes
+            diffs = current - neighborhood
+
+            # Apply diagonal scaling
+            diagonals = [(0, 0), (0, 2), (2, 0), (2, 2)]
+            for i, j in diagonals:
+                diffs[i, j] /= 1.414
+
+            # Convert to angles
+            slope_matrix[row, col] = np.degrees(np.arctan(diffs))
+
+            # Center point is always 0
+            slope_matrix[row, col, 1, 1] = 0
+
+    return slope_matrix
+
+
+thetas = [[45, 0, 45], [90, 0, 90], [135, 180, 135]]
+
+
+def calc_pw(theta):
+    c_1, c_2 = 0.045, 0.131
+    V = 10
+    t = np.radians(theta)
+    ft = np.exp(V * c_2 * (np.cos(t) - 1))
+    return np.exp(c_1 * V) * ft
+
+
+def get_wind():
+    wind_matrix = np.zeros((3, 3))
+    theta_array = np.array(thetas)
+    wind_matrix = calc_pw(theta_array)
+    wind_matrix[1, 1] = 0
+    return wind_matrix
+
+
+class AdvancedForestFireBulldozerEnv(CAEnv):
     metadata = {"render_modes": ["human"], "render_mode": "rgb_array"}
 
     @property
@@ -95,12 +170,18 @@ class ForestFireBulldozerEnv(CAEnv):
         )
         self._pos_fire = pos_fire  # Initial position of fire, default at `initial_fire`
 
-        self._p_tree = p_tree  # Initial Tree probability
-        self._p_empty = p_empty  # Initial Empty probality
+        self._p_tree_init = p_tree  # Initial Tree probability
+        self._p_empty_init = p_empty  # Initial Empty probality
 
         # Env Behavior Parameters
 
-        self._wind = self._parse_wind(wind)  # Fire Propagation Probabilities
+        self._wind = get_wind()
+        self._density = init_density(nrows, ncols)
+        self._vegitation = init_vegetation(nrows, ncols)
+        self._altitude = init_altitude(nrows, ncols)
+        self._slope = get_slope(self._altitude, nrows, ncols)
+        self._p_fire = 0.033
+        self._p_tree = 0.333
 
         self._effects = {self._tree: self._empty}  # Substitution Effect
 
@@ -159,7 +240,9 @@ class ForestFireBulldozerEnv(CAEnv):
         self._set_spaces()
         self._init_time_mappings()
 
-        self.ca = WindyForestFire(self._empty, self._tree, self._fire, **self.ca_space)
+        self.ca = PartiallyObservableForestFire(
+            self._empty, self._tree, self._fire, **self.ca_space
+        )
 
         self.move = Move(self._action_sets, **self.move_space)
         self.modify = Modify(self._effects, **self.modify_space)
@@ -234,7 +317,7 @@ class ForestFireBulldozerEnv(CAEnv):
         # fmt: off
         grid_space = GridSpace(
             values = [  self._empty,   self._tree,   self._fire],
-            probs  = [self._p_empty, self._p_tree,          0.0],
+            probs  = [self._p_empty_init, self._p_tree_init,          0.0],
             shape=(self.nrows, self.ncols),
         )
         # fmt: on
@@ -267,7 +350,15 @@ class ForestFireBulldozerEnv(CAEnv):
 
         init_position = np.array(self._pos_bull)
         init_context = (
-            {"wind": self._wind},
+            {
+                "wind": self._wind,
+                "density": self._density,
+                "vegetation": self._vegitation,
+                "altitude": self._altitude,
+                "slope": self._slope,
+                "p_fire": np.array(self._p_fire, dtype=TYPE_BOX),
+                "p_tree": np.array(self._p_tree, dtype=TYPE_BOX),
+            },
             init_position,
             np.array(init_time, dtype=TYPE_BOX),
         )
@@ -326,8 +417,12 @@ class ForestFireBulldozerEnv(CAEnv):
         )
         self.time_space = spaces.Box(0.0, float("inf"), shape=tuple(), dtype=TYPE_BOX)
 
-        self.context_space = spaces.Tuple(
-            (self.ca_params_space, self.position_space, self.time_space)
+        self.context_space = spaces.Dict(
+            {
+                "ca_params": self.ca_params_space,
+                "position": self.position_space,
+                "time": self.time_space,
+            }
         )
 
         # RL spaces

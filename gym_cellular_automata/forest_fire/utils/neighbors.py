@@ -149,7 +149,7 @@ def moore_n(
 
 # Depracated: Still used as interface for CAs.
 # Superseded by Moore N function.
-def neighborhood_at(grid, pos, invariant=0):
+def neighborhood_at(grid, pos, invariant=0, return_grid=False):
     """
     Calculates the Moore's neighborhood of cell at target position 'pos'.
     The boundary conditions are invariant and set to 'empty'.
@@ -176,5 +176,9 @@ def neighborhood_at(grid, pos, invariant=0):
     )
 
     N = 1
-    neighborhood = moore_n(N, pos, grid, invariant).flatten().tolist()
-    return Neighbors(*neighborhood)
+    grid = moore_n(N, pos, grid, invariant)
+    neighborhood = grid.flatten().tolist()
+    if return_grid:
+        return Neighbors(*neighborhood), grid
+    else:
+        return Neighbors(*neighborhood)

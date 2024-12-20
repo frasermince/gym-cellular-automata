@@ -54,18 +54,19 @@ def generate_gif(
 
 
 def generate_gif_envs(updates: int, duration_frame: int):
-    for env_name in gymca.envs:
-        try:
-            env = make(env_name)
-        except NameNotFound:
-            env = make(env_name.split(":")[1])
-        finally:
-            generate_gif(
-                env,
-                env_name.replace(":", "_"),
-                updates=updates,
-                duration_between=duration_frame,
-            )
+    prototypes = ["helicopter", "bulldozer", "advanced_bulldozer"]
+
+    proto_id = 2
+    name = prototypes[proto_id]
+    ProtoEnv = gymca.prototypes[proto_id]
+    env = ProtoEnv(nrows=42, ncols=42)
+
+    generate_gif(
+        env,
+        name,
+        updates=updates,
+        duration_between=duration_frame,
+    )
 
 
 # CLI args
