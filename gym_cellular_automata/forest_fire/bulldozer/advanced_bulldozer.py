@@ -15,29 +15,122 @@ from gym_cellular_automata.forest_fire.operators import (
 from gym_cellular_automata.grid_space import GridSpace
 from gym_cellular_automata.operator import Operator
 
-from .utils.render import render
+from .utils.render import render, plot_grid_attribute
 
 import math
 
 
 def init_vegetation(row_count, column_count):
     veg_matrix = np.zeros((row_count, column_count), dtype=int)
-    veg_matrix[:, : column_count // 3] = 1
-    veg_matrix[:, column_count // 3 : 2 * column_count // 3] = 2
-    veg_matrix[:, 2 * column_count // 3 :] = 3
+
+    # Create random patches of different vegetation types
+    num_patches = np.random.randint(4, 8)
+    for _ in range(num_patches):
+        # Random patch center and size
+        center_row = np.random.randint(0, row_count)
+        center_col = np.random.randint(0, column_count)
+        patch_height = np.random.randint(3, row_count // 2)
+        patch_width = np.random.randint(3, column_count // 2)
+
+        # Random vegetation type (1-3)
+        veg_type = np.random.randint(1, 4)
+
+        # Fill patch
+        row_start = max(0, center_row - patch_height // 2)
+        row_end = min(row_count, center_row + patch_height // 2)
+        col_start = max(0, center_col - patch_width // 2)
+        col_end = min(column_count, center_col + patch_width // 2)
+
+        veg_matrix[row_start:row_end, col_start:col_end] = veg_type
+
+    # Fill any remaining zeros randomly
+    zero_mask = veg_matrix == 0
+    veg_matrix[zero_mask] = np.random.randint(1, 4, size=np.sum(zero_mask))
+
     return veg_matrix
 
 
 def init_density(row_count, column_count):
     den_matrix = np.zeros((row_count, column_count), dtype=int)
-    den_matrix[:, : column_count // 3] = 1
-    den_matrix[:, column_count // 3 : 2 * column_count // 3] = 2
-    den_matrix[:, 2 * column_count // 3 :] = 3
+
+    # Create random patches of different density types
+    num_patches = np.random.randint(4, 8)
+    for _ in range(num_patches):
+        # Random patch center and size
+        center_row = np.random.randint(0, row_count)
+        center_col = np.random.randint(0, column_count)
+        patch_height = np.random.randint(3, row_count // 2)
+        patch_width = np.random.randint(3, column_count // 2)
+
+        # Random density type (1-3)
+        den_type = np.random.randint(1, 4)
+
+        # Fill patch
+        row_start = max(0, center_row - patch_height // 2)
+        row_end = min(row_count, center_row + patch_height // 2)
+        col_start = max(0, center_col - patch_width // 2)
+        col_end = min(column_count, center_col + patch_width // 2)
+
+        den_matrix[row_start:row_end, col_start:col_end] = den_type
+
+    # Fill any remaining zeros randomly
+    zero_mask = den_matrix == 0
+    den_matrix[zero_mask] = np.random.randint(1, 4, size=np.sum(zero_mask))
+
     return den_matrix
 
 
 def init_altitude(row_count, column_count):
     return np.tile(np.arange(column_count), (row_count, 1))
+
+
+def init_altitude_2(row_count, column_count):
+    # Start with a base of random noise
+    altitude = np.random.uniform(0, 5, (row_count, column_count))
+
+    # Add more small hills
+    num_hills = np.random.randint(6, 10)  # More hills
+    for _ in range(num_hills):
+        # Random hill center and size
+        center_row = np.random.randint(0, row_count)
+        center_col = np.random.randint(0, column_count)
+        radius = np.random.randint(
+            2, min(row_count, column_count) // 4
+        )  # Smaller radius
+        height = np.random.uniform(2, 6)  # Lower heights for smaller hills
+
+        # Create hill using distance from center
+        for i in range(row_count):
+            for j in range(column_count):
+                distance = np.sqrt((i - center_row) ** 2 + (j - center_col) ** 2)
+                if distance < radius:
+                    # Smooth hill falloff using cosine
+                    factor = np.cos(distance / radius * np.pi / 2)
+                    altitude[i, j] += height * factor
+
+    # Add some gentle slopes between flat areas
+    num_slopes = np.random.randint(4, 8)  # More slopes
+    for _ in range(num_slopes):
+        # Random rectangular area - smaller areas
+        start_row = np.random.randint(0, row_count - 4)
+        start_col = np.random.randint(0, column_count - 4)
+        width = np.random.randint(3, column_count // 4)  # Smaller width
+        height = np.random.randint(3, row_count // 4)  # Smaller height
+
+        # Small height difference for gentle slope
+        height_diff = np.random.uniform(1, 4)  # Smaller height differences
+
+        # Add gradual slope
+        for i in range(start_row, min(start_row + height, row_count)):
+            for j in range(start_col, min(start_col + width, column_count)):
+                progress = (i - start_row) / height
+                altitude[i, j] += height_diff * progress
+
+    return altitude
+
+
+def init_altitude_3(row_count, column_count):
+    return np.zeros((row_count, column_count))
 
 
 def tg(x):
@@ -74,7 +167,26 @@ def get_slope(altitude, row_count, column_count):
     return slope_matrix
 
 
-thetas = [[45, 0, 45], [90, 0, 90], [135, 180, 135]]
+wind_thetas = [
+    # North Wind (blowing from South to North)
+    [[45, 0, 45], [90, 0, 90], [135, 180, 135]],
+    # Northeast Wind
+    [[90, 45, 0], [135, 0, 45], [180, 135, 90]],
+    # East Wind (blowing from West to East)
+    [[135, 90, 45], [180, 0, 0], [135, 90, 45]],
+    # Southeast Wind
+    [[180, 135, 90], [135, 0, 45], [90, 45, 0]],
+    # South Wind (blowing from North to South)
+    [[135, 180, 135], [90, 0, 90], [45, 0, 45]],
+    # Southwest Wind
+    [[90, 135, 180], [45, 0, 135], [0, 45, 90]],
+    # West Wind (blowing from East to West)
+    [[45, 90, 135], [0, 0, 180], [45, 90, 135]],
+    # Northwest Wind
+    [[0, 45, 90], [45, 0, 135], [90, 135, 180]],
+]
+
+# thetas = [[45, 0, 45], [90, 0, 90], [135, 180, 135]]
 
 
 def calc_pw(theta):
@@ -82,15 +194,18 @@ def calc_pw(theta):
     V = 10
     t = np.radians(theta)
     ft = np.exp(V * c_2 * (np.cos(t) - 1))
-    return np.exp(c_1 * V) * ft
+    return np.exp(c_1 * V) * ft, ft
 
 
-def get_wind():
-    wind_matrix = np.zeros((3, 3))
-    theta_array = np.array(thetas)
-    wind_matrix = calc_pw(theta_array)
-    wind_matrix[1, 1] = 0
-    return wind_matrix
+def get_winds():
+    winds = []
+    for thetas in wind_thetas:
+        wind_matrix = np.zeros((3, 3))
+        theta_array = np.array(thetas)
+        wind_matrix, ft = calc_pw(theta_array)
+        wind_matrix[1, 1] = 0
+        winds.append((wind_matrix, ft))
+    return winds
 
 
 class AdvancedForestFireBulldozerEnv(CAEnv):
@@ -125,16 +240,6 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         t_any=0.001,
         p_tree=0.90,
         p_empty=0.10,
-        wind={
-            "up_left": 0.48,
-            "up": 0.64,
-            "up_right": 0.98,
-            "left": 0.12,
-            "right": 0.64,
-            "down_left": 0.06,
-            "down": 0.12,
-            "down_right": 0.48,
-        },
         **kwargs
     ):
         super().__init__(nrows, ncols, **kwargs)
@@ -175,13 +280,15 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
 
         # Env Behavior Parameters
 
-        self._wind = get_wind()
+        self._winds = get_winds()
+        self._wind = self._winds[0]
         self._density = init_density(nrows, ncols)
         self._vegitation = init_vegetation(nrows, ncols)
-        self._altitude = init_altitude(nrows, ncols)
+        self._altitude = init_altitude_2(nrows, ncols)
         self._slope = get_slope(self._altitude, nrows, ncols)
-        self._p_fire = 0.033
-        self._p_tree = 0.333
+        self._p_fire = 0.00033
+        self._p_tree = 0.00333
+        self._p_wind_change = 0.03
 
         self._effects = {self._tree: self._empty}  # Substitution Effect
 
@@ -259,6 +366,12 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
 
     def render(self, mode="human"):
         return render(self)
+
+    def altitude_render(self):
+        return plot_grid_attribute(self._altitude, "Altitude")
+
+    def density_render(self):
+        return plot_grid_attribute(self._density, "Density")
 
     def _award(self):
         """Reward Function
@@ -351,13 +464,15 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         init_position = np.array(self._pos_bull)
         init_context = (
             {
-                "wind": self._wind,
+                "winds": self._winds,
+                "wind_index": 0,
                 "density": self._density,
                 "vegetation": self._vegitation,
                 "altitude": self._altitude,
                 "slope": self._slope,
                 "p_fire": np.array(self._p_fire, dtype=TYPE_BOX),
                 "p_tree": np.array(self._p_tree, dtype=TYPE_BOX),
+                "p_wind_change": np.array(self._p_wind_change, dtype=TYPE_BOX),
             },
             init_position,
             np.array(init_time, dtype=TYPE_BOX),

@@ -7,6 +7,7 @@ from typing import Union
 import gif
 from gymnasium import Env, make
 from gymnasium.error import NameNotFound
+import moviepy as mp
 from matplotlib._api.deprecation import MatplotlibDeprecationWarning
 
 import gym_cellular_automata as gymca
@@ -38,6 +39,10 @@ def generate_gif(
     updates: int = 50,
     duration_between: int = 50,
 ):
+    import time
+
+    start_time = time.time()
+
     make_frame = get_make_frame(env)
     frames = []
 
@@ -46,11 +51,39 @@ def generate_gif(
             frames.append(make_frame())
 
     if isinstance(name, str):
-        folder = Path().cwd() / "gifs"
-        folder.mkdir(exist_ok=True)
-        path = folder / f"{name}.gif"
+        # Create main gifs directory
+        base_folder = Path().cwd() / "gifs"
+        base_folder.mkdir(exist_ok=True)
 
-    gif.save(frames, str(path), duration=duration_between)
+        # Create env-specific subfolder
+        env_folder = base_folder / name
+        env_folder.mkdir(exist_ok=True)
+
+        # Set paths for all files
+        gif_path = env_folder / f"{name}.gif"
+        mp4_path = env_folder / f"{name}.mp4"
+        altitude_path = env_folder / f"{name}_altitude.png"
+        density_path = env_folder / f"{name}_density.png"
+
+    end_time = time.time()
+    # Save gif and mp4
+    print(f"Generation completed in {end_time - start_time:.2f} seconds")
+    gif.save(frames, str(gif_path), duration=duration_between)
+    clip = mp.VideoFileClip(str(gif_path))
+    clip.write_videofile(mp4_path, fps=30, threads=1, codec="libx264")
+
+    if name == "advanced_bulldozer":
+        # Generate and save altitude plot
+        altitude_plot = env.altitude_render()
+        altitude_plot.savefig(altitude_path)
+        # altitude_plot.close()
+
+        # Generate and save density plot
+        density_plot = env.density_render()
+        density_plot.savefig(density_path)
+    # density_plot.close()
+
+    print(f"Generation completed in {end_time - start_time:.2f} seconds")
 
 
 def generate_gif_envs(updates: int, duration_frame: int):
@@ -59,7 +92,7 @@ def generate_gif_envs(updates: int, duration_frame: int):
     proto_id = 2
     name = prototypes[proto_id]
     ProtoEnv = gymca.prototypes[proto_id]
-    env = ProtoEnv(nrows=42, ncols=42)
+    env = ProtoEnv(nrows=200, ncols=200)
 
     generate_gif(
         env,

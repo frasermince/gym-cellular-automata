@@ -32,16 +32,98 @@ class PartiallyObservableForestFire(Operator):
         if self.context_space is None:
             self.context_space = spaces.Box(0.0, 1.0, shape=(2,), dtype=TYPE_BOX)
 
+    def sample_pinecone_parameters(self, directions=8):
+        # Sample number of pinecones for each cell from Poisson distribution
+        N_p = self.np_random.poisson()
+
+        # Sample directions for each pinecone
+        total_pinecones = np.sum(N_p)
+
+        # Generate random integers 0-7 representing directions
+        # Direction indices in 3x3 grid:
+        # [0,1,2]
+        # [3,4,5] where 4 is center
+        # [6,7,8]
+        directions = self.np_random.integers(0, 8, size=total_pinecones)
+
+        # 3x3 lookup grid for wind directions, excluding center (1,1)
+        lookup_grid = [
+            (0, 0),
+            (0, 1),
+            (0, 2),  # Top row
+            (1, 0),
+            (1, 2),  # Middle row (skip center)
+            (2, 0),
+            (2, 1),
+            (2, 2),  # Bottom row
+        ]
+        grid_indices = np.array([lookup_grid[d] for d in directions])
+
+        # Convert to (dx, dy) grid movements using lookup tables
+        dx_lookup = [1, 1, 0, -1, -1, -1, 0, 1]  # E, NE, N, NW, W, SW, S, SE
+        dy_lookup = [0, 1, 1, 1, 0, -1, -1, -1]  # E, NE, N, NW, W, SW, S, SE
+
+        dx = np.array([dx_lookup[d] for d in directions])
+        dy = np.array([dy_lookup[d] for d in directions])
+
+        return N_p, (dx, dy, grid_indices)
+
+    def _set_fire(
+        self,
+        neighbors_grid,
+        row,
+        col,
+        new_grid,
+        wind_matrix,
+        density_matrix,
+        vegetation_matrix,
+        slope_matrix,
+    ):
+        fire_grid = neighbors_grid == self.fire
+        p_veg = {1: 0.0, 2: 0.4, 3: 0.8}[vegetation_matrix[row][col]]
+        p_den = {1: 0.0, 2: 0.3, 3: 0.6}[density_matrix[row][col]]
+        p_h = 3
+        a = 0.078
+
+        slope = slope_matrix[row][col]
+        p_slope = np.exp(a * slope)
+        p_burn = p_h * (1 + p_veg) * (1 + p_den) * wind_matrix * p_slope
+        burn_probability = p_burn > self.np_random.uniform(0, 1, p_burn.shape)
+        # import pdb
+
+        # pdb.set_trace()
+
+        if np.any(fire_grid & burn_probability):
+            new_grid[row][col] = self.fire
+
+    def _set_fire_pinecone(
+        self,
+        row,
+        col,
+        new_grid,
+        density_matrix,
+        vegetation_matrix,
+    ):
+        p_veg = {1: 0, 2: 0.4, 3: 0.8}[vegetation_matrix[row][col]]
+        p_den = {1: 0, 2: 0.3, 3: 0.6}[density_matrix[row][col]]
+        p_h = 3
+
+        p_burn = p_h * (1 + p_veg) * (1 + p_den)
+        burn_probability = p_burn > self.np_random.uniform(0, 1)
+
+        if np.any(burn_probability):
+            new_grid[row][col] = self.fire
+
     def update(self, grid, action, context):
         # A copy is needed for the sequential update of a CA
-        wind_matrix = context["wind"]
+        wind_matrix, ft = context["winds"][context["wind_index"]]
         density_matrix = context["density"]
         vegetation_matrix = context["vegetation"]
         slope_matrix = context["slope"]
 
         new_grid = grid.copy()
-        p_fire = context["p_fire"]
         p_tree = context["p_tree"]
+        p_wind_change = context["p_wind_change"]
 
         for row, cells in enumerate(grid):
             for col, cell in enumerate(cells):
@@ -50,53 +132,16 @@ class PartiallyObservableForestFire(Operator):
                 )
 
                 if cell == self.tree and self.fire in neighbors:
-                    has_set_fire = False
-                    for env_row in [0, 1, 2]:
-                        if has_set_fire:
-                            break
-                        for env_col in [0, 1, 2]:
-                            if has_set_fire:
-                                break
-
-                            if (
-                                neighbors_grid[env_row][env_col] == self.fire
-                            ):  # we only care there is a neighbour that is burning
-                                p_veg = {1: -0.3, 2: 0, 3: 0.4}[
-                                    vegetation_matrix[row][col]
-                                ]
-                                p_den = {1: -0.4, 2: 0, 3: 0.3}[
-                                    density_matrix[row][col]
-                                ]
-                                p_h = 0.58
-                                a = 0.078
-                                slope = slope_matrix[row][col][env_row][env_col]
-                                p_slope = np.exp(a * slope)
-                                p_wind = wind_matrix[env_row][env_col]
-                                p_burn = (
-                                    p_h * (1 + p_veg) * (1 + p_den) * p_wind * p_slope
-                                )
-                                # print(
-                                #     "p_veg p_den p_wind p_slope p_burn",
-                                #     p_veg,
-                                #     p_den,
-                                #     p_wind,
-                                #     p_slope,
-                                #     p_burn,
-                                # )
-                                if p_burn > random.random():
-                                    new_grid[row][col] = self.fire
-                                    has_set_fire = True
-
-                                    # Burn tree to the ground
-
-                elif cell == self.tree:
-                    # Sample for lightning strike
-
-                    strike = self.np_random.choice(
-                        [True, False], p=normalize_p([p_fire, 1 - p_fire])
+                    self._set_fire(
+                        neighbors_grid,
+                        row,
+                        col,
+                        new_grid,
+                        wind_matrix,
+                        density_matrix,
+                        vegetation_matrix,
+                        slope_matrix,
                     )
-
-                    new_grid[row][col] = self.fire if strike else cell
 
                 elif cell == self.empty:
                     # Sample to grow a tree
@@ -109,5 +154,38 @@ class PartiallyObservableForestFire(Operator):
                 elif cell == self.fire:
                     # Consume fire
                     new_grid[row][col] = self.empty
+                    number_pinecones, (dx, dy, grid_indices) = (
+                        self.sample_pinecone_parameters()
+                    )
+                    if number_pinecones == 0:
+                        continue
+                    pinecone_thrust = np.random.standard_normal(number_pinecones)
+                    pinecone_thrust = pinecone_thrust * ft[tuple(zip(*grid_indices))]
+                    for i in range(number_pinecones):
+                        new_row = round(row + dx[i] * pinecone_thrust[i])
+                        new_col = round(col + dy[i] * pinecone_thrust[i])
+                        if (
+                            new_row >= 0
+                            and new_row < len(grid)
+                            and new_col >= 0
+                            and new_col < len(grid[0])
+                            and (new_row, new_col) != (row, col)
+                        ):
+                            self._set_fire_pinecone(
+                                new_row,
+                                new_col,
+                                new_grid,
+                                density_matrix,
+                                vegetation_matrix,
+                            )
 
+        wind_change = self.np_random.choice(
+            [True, False], p=normalize_p([p_wind_change, 1 - p_wind_change])
+        )
+        if wind_change:
+            new_wind = self.np_random.integers(1, 8)  # Sample between 1 and 7
+            context["wind_index"] = (context["wind_index"] + new_wind) % len(
+                context["winds"]
+            )
+            print(f"Wind change: {new_wind} steps")
         return new_grid, context
