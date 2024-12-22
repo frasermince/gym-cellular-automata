@@ -33,7 +33,7 @@ def init_vegetation(row_count, column_count):
         patch_width = np.random.randint(3, column_count // 2)
 
         # Random vegetation type (1-3)
-        veg_type = np.random.randint(1, 4)
+        veg_type = np.random.randint(1, 6)
 
         # Fill patch
         row_start = max(0, center_row - patch_height // 2)
@@ -63,7 +63,7 @@ def init_density(row_count, column_count):
         patch_width = np.random.randint(3, column_count // 2)
 
         # Random density type (1-3)
-        den_type = np.random.randint(1, 4)
+        den_type = np.random.randint(1, 6)
 
         # Fill patch
         row_start = max(0, center_row - patch_height // 2)
@@ -126,11 +126,7 @@ def init_altitude_2(row_count, column_count):
                 progress = (i - start_row) / height
                 altitude[i, j] += height_diff * progress
 
-    return altitude
-
-
-def init_altitude_3(row_count, column_count):
-    return np.zeros((row_count, column_count))
+    return altitude / 10
 
 
 def tg(x):
@@ -164,6 +160,14 @@ def get_slope(altitude, row_count, column_count):
             # Center point is always 0
             slope_matrix[row, col, 1, 1] = 0
 
+    # Bin slope values into 10 ranges and count cells in each bin
+    slope_flat = slope_matrix.flatten()
+    slope_min, slope_max = np.min(slope_flat), np.max(slope_flat)
+    bins = np.linspace(slope_min, slope_max, num=11)  # 11 edges make 10 bins
+    hist, _ = np.histogram(slope_flat, bins=bins)
+    print("\nSlope distribution:")
+    for i, count in enumerate(hist):
+        print(f"Range {bins[i]:.2f} to {bins[i+1]:.2f}: {count} cells")
     return slope_matrix
 
 
@@ -240,7 +244,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         t_any=0.001,
         p_tree=0.90,
         p_empty=0.10,
-        **kwargs
+        **kwargs,
     ):
         super().__init__(nrows, ncols, **kwargs)
 
@@ -286,6 +290,8 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         self._vegitation = init_vegetation(nrows, ncols)
         self._altitude = init_altitude_2(nrows, ncols)
         self._slope = get_slope(self._altitude, nrows, ncols)
+
+        self._fire_age = np.zeros((nrows, ncols))
         self._p_fire = 0.00033
         self._p_tree = 0.00333
         self._p_wind_change = 0.03
@@ -373,6 +379,9 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
     def density_render(self):
         return plot_grid_attribute(self._density, "Density")
 
+    def vegitation_render(self):
+        return plot_grid_attribute(self._vegitation, "Vegitation")
+
     def _award(self):
         """Reward Function
 
@@ -445,6 +454,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
 
         r, c = self._pos_fire
         grid[r, c] = self._fire
+        self._fire_age[r, c] = 10
 
         return grid
 
@@ -473,6 +483,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
                 "p_fire": np.array(self._p_fire, dtype=TYPE_BOX),
                 "p_tree": np.array(self._p_tree, dtype=TYPE_BOX),
                 "p_wind_change": np.array(self._p_wind_change, dtype=TYPE_BOX),
+                "fire_age": self._fire_age,
             },
             init_position,
             np.array(init_time, dtype=TYPE_BOX),

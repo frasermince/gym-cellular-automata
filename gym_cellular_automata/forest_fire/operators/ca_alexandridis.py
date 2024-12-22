@@ -78,16 +78,29 @@ class PartiallyObservableForestFire(Operator):
         density_matrix,
         vegetation_matrix,
         slope_matrix,
+        altitude_matrix,
+        fire_age,
     ):
+        # Get altitude values in 3x3 neighborhood centered on current cell
+        # row_start = max(0, row - 1)
+        # row_end = min(altitude_matrix.shape[0], row + 2)
+        # col_start = max(0, col - 1)
+        # col_end = min(altitude_matrix.shape[1], col + 2)
+
+        # altitude_neighborhood = altitude_matrix[row_start:row_end, col_start:col_end]
         fire_grid = neighbors_grid == self.fire
-        p_veg = {1: 0.0, 2: 0.4, 3: 0.8}[vegetation_matrix[row][col]]
-        p_den = {1: 0.0, 2: 0.3, 3: 0.6}[density_matrix[row][col]]
-        p_h = 3
+        p_veg = {1: -0.3, 2: 0.0, 3: 0.3, 4: 0.6, 5: 1.0}[vegetation_matrix[row][col]]
+        p_den = {1: -0.4, 2: 0, 3: 0.3, 4: 0.6, 5: 1.0}[density_matrix[row][col]]
+        p_h = 0.58
         a = 0.078
 
         slope = slope_matrix[row][col]
         p_slope = np.exp(a * slope)
         p_burn = p_h * (1 + p_veg) * (1 + p_den) * wind_matrix * p_slope
+        print("p_burn min max", np.min(p_burn), np.max(p_burn))
+        # import pdb
+
+        # pdb.set_trace()
         burn_probability = p_burn > self.np_random.uniform(0, 1, p_burn.shape)
         # import pdb
 
@@ -95,6 +108,7 @@ class PartiallyObservableForestFire(Operator):
 
         if np.any(fire_grid & burn_probability):
             new_grid[row][col] = self.fire
+            fire_age[row][col] = self.np_random.integers(4, 11)
 
     def _set_fire_pinecone(
         self,
@@ -103,16 +117,20 @@ class PartiallyObservableForestFire(Operator):
         new_grid,
         density_matrix,
         vegetation_matrix,
+        fire_age,
     ):
-        p_veg = {1: 0, 2: 0.4, 3: 0.8}[vegetation_matrix[row][col]]
-        p_den = {1: 0, 2: 0.3, 3: 0.6}[density_matrix[row][col]]
-        p_h = 3
+        p_veg = {1: 0.0, 2: 0.8, 3: 1.6, 4: 2.0, 5: 2.5}[vegetation_matrix[row][col]]
+        p_den = {1: 0.0, 2: 0.6, 3: 1.2, 4: 1.5, 5: 2.0}[density_matrix[row][col]]
+        p_h = 0.58
 
         p_burn = p_h * (1 + p_veg) * (1 + p_den)
         burn_probability = p_burn > self.np_random.uniform(0, 1)
 
         if np.any(burn_probability):
             new_grid[row][col] = self.fire
+            fire_age[row][col] = self.np_random.integers(4, 11)
+            return True
+        return False
 
     def update(self, grid, action, context):
         # A copy is needed for the sequential update of a CA
@@ -120,13 +138,18 @@ class PartiallyObservableForestFire(Operator):
         density_matrix = context["density"]
         vegetation_matrix = context["vegetation"]
         slope_matrix = context["slope"]
+        altitude_matrix = context["altitude"]
 
         new_grid = grid.copy()
         p_tree = context["p_tree"]
         p_wind_change = context["p_wind_change"]
+        fire_age = context["fire_age"]
+        skipped_indices = []
 
         for row, cells in enumerate(grid):
             for col, cell in enumerate(cells):
+                if (row, col) in skipped_indices:
+                    continue
                 neighbors, neighbors_grid = neighborhood_at(
                     grid, (row, col), invariant=self.empty, return_grid=True
                 )
@@ -141,6 +164,8 @@ class PartiallyObservableForestFire(Operator):
                         density_matrix,
                         vegetation_matrix,
                         slope_matrix,
+                        altitude_matrix,
+                        fire_age,
                     )
 
                 elif cell == self.empty:
@@ -153,13 +178,15 @@ class PartiallyObservableForestFire(Operator):
 
                 elif cell == self.fire:
                     # Consume fire
-                    new_grid[row][col] = self.empty
+                    fire_age[row][col] -= 1
+                    if fire_age[row][col] == 0:
+                        new_grid[row][col] = self.empty
                     number_pinecones, (dx, dy, grid_indices) = (
                         self.sample_pinecone_parameters()
                     )
                     if number_pinecones == 0:
                         continue
-                    pinecone_thrust = np.random.standard_normal(number_pinecones)
+                    pinecone_thrust = 3 * np.random.standard_normal(number_pinecones)
                     pinecone_thrust = pinecone_thrust * ft[tuple(zip(*grid_indices))]
                     for i in range(number_pinecones):
                         new_row = round(row + dx[i] * pinecone_thrust[i])
@@ -171,13 +198,16 @@ class PartiallyObservableForestFire(Operator):
                             and new_col < len(grid[0])
                             and (new_row, new_col) != (row, col)
                         ):
-                            self._set_fire_pinecone(
+                            did_burn = self._set_fire_pinecone(
                                 new_row,
                                 new_col,
                                 new_grid,
                                 density_matrix,
                                 vegetation_matrix,
+                                fire_age,
                             )
+                            if did_burn:
+                                skipped_indices.append((new_row, new_col))
 
         wind_change = self.np_random.choice(
             [True, False], p=normalize_p([p_wind_change, 1 - p_wind_change])
