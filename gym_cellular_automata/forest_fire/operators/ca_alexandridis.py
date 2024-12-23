@@ -1,4 +1,4 @@
-import numpy as np
+import jax.numpy as np
 from gymnasium import spaces
 
 from gym_cellular_automata._config import TYPE_BOX
@@ -97,7 +97,7 @@ class PartiallyObservableForestFire(Operator):
         slope = slope_matrix[row][col]
         p_slope = np.exp(a * slope)
         p_burn = p_h * (1 + p_veg) * (1 + p_den) * wind_matrix * p_slope
-        print("p_burn min max", np.min(p_burn), np.max(p_burn))
+        # print("p_burn min max", np.min(p_burn), np.max(p_burn))
         # import pdb
 
         # pdb.set_trace()

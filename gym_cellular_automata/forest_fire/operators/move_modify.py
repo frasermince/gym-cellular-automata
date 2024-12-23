@@ -1,6 +1,6 @@
 from typing import Dict, Set
 
-import numpy as np
+import jax.numpy as np
 from gymnasium import logger, spaces
 
 from gym_cellular_automata.operator import Operator
@@ -85,10 +85,11 @@ class Modify(Operator):
         self.hit = False
 
         row, col = context
+        cell_value = int(grid[row, col])
 
         if action:
-            if grid[row, col] in self.effects:
-                grid[row, col] = self.effects[grid[row, col]]
+            if cell_value in self.effects:
+                grid = grid.at[row, col].set(self.effects[cell_value])
                 self.hit = True
 
         return grid, context

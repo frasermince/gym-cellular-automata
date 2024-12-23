@@ -1,6 +1,8 @@
 from typing import Optional, Tuple
 
+import jax.numpy as jnp
 import numpy as np
+from jax import jit, vmap, random, lax
 from gymnasium import spaces
 
 from gym_cellular_automata._config import TYPE_BOX, TYPE_INT
@@ -11,6 +13,7 @@ from gym_cellular_automata.forest_fire.operators import (
     MoveModify,
     RepeatCA,
     PartiallyObservableForestFire,
+    PartiallyObservableForestFireJax,
 )
 from gym_cellular_automata.grid_space import GridSpace
 from gym_cellular_automata.operator import Operator
@@ -284,14 +287,23 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
 
         # Env Behavior Parameters
 
-        self._winds = get_winds()
-        self._wind = self._winds[0]
-        self._density = init_density(nrows, ncols)
-        self._vegitation = init_vegetation(nrows, ncols)
-        self._altitude = init_altitude_2(nrows, ncols)
-        self._slope = get_slope(self._altitude, nrows, ncols)
+        winds = get_winds()  # Get numpy array
 
-        self._fire_age = np.zeros((nrows, ncols))
+        density = init_density(nrows, ncols)  # Get numpy array
+
+        vegetation = init_vegetation(nrows, ncols)  # Get numpy array
+
+        altitude = init_altitude_2(nrows, ncols)  # Get numpy array
+        slope = get_slope(altitude, nrows, ncols)  # Get numpy array
+
+        self._winds = jnp.array(winds)  # Convert to JAX array
+        self._wind = self._winds[0]
+        self._density = jnp.array(density)  # Convert to JAX array
+        self._vegitation = jnp.array(vegetation)  # Convert to JAX array
+        self._altitude = jnp.array(altitude)  # Convert to JAX array
+        self._slope = jnp.array(slope)  # Convert to JAX array
+
+        self._fire_age = jnp.zeros((nrows, ncols))
         self._p_fire = 0.00033
         self._p_tree = 0.00333
         self._p_wind_change = 0.03
@@ -353,7 +365,10 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         self._set_spaces()
         self._init_time_mappings()
 
-        self.ca = PartiallyObservableForestFire(
+        # self.ca = PartiallyObservableForestFireJax(
+        #     self._empty, self._tree, self._fire, **self.ca_space
+        # )
+        self.ca = PartiallyObservableForestFireJax(
             self._empty, self._tree, self._fire, **self.ca_space
         )
 
@@ -454,12 +469,12 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
 
         r, c = self._pos_fire
         grid[r, c] = self._fire
-        self._fire_age[r, c] = 10
+        self._fire_age = self._fire_age.at[r, c].set(10)
 
-        return grid
+        return jnp.array(grid, dtype=TYPE_INT)
 
     def _initial_context_distribution(self):
-        init_time = np.array(0.0)
+        init_time = jnp.array(0.0)
 
         if self._pos_bull is None:
             # Bulldozer Position
@@ -471,7 +486,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
 
             self._pos_bull = r, c
 
-        init_position = np.array(self._pos_bull)
+        init_position = jnp.array(self._pos_bull)
         init_context = (
             {
                 "winds": self._winds,
@@ -480,13 +495,13 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
                 "vegetation": self._vegitation,
                 "altitude": self._altitude,
                 "slope": self._slope,
-                "p_fire": np.array(self._p_fire, dtype=TYPE_BOX),
-                "p_tree": np.array(self._p_tree, dtype=TYPE_BOX),
-                "p_wind_change": np.array(self._p_wind_change, dtype=TYPE_BOX),
+                "p_fire": jnp.array(self._p_fire, dtype=TYPE_BOX),
+                "p_tree": jnp.array(self._p_tree, dtype=TYPE_BOX),
+                "p_wind_change": jnp.array(self._p_wind_change, dtype=TYPE_BOX),
                 "fire_age": self._fire_age,
             },
             init_position,
-            np.array(init_time, dtype=TYPE_BOX),
+            jnp.array(init_time, dtype=TYPE_BOX),
         )
 
         return init_context
