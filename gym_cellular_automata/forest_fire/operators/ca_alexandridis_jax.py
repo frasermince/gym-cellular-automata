@@ -9,8 +9,6 @@ from gym_cellular_automata.operator import Operator
 
 import os
 
-os.environ["JAX_DISABLE_JIT"] = "True"
-
 
 @partial(jit, static_argnums=(0))
 def moore_n(n: int, position: tuple, grid: jnp.ndarray, invariant: float = 0.0):

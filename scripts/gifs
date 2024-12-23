@@ -5,9 +5,11 @@ from pathlib import Path
 from typing import Union
 
 import gif
+import jax
+import moviepy as mp
 from gymnasium import Env, make
 from gymnasium.error import NameNotFound
-import moviepy as mp
+from jax.lib import xla_bridge
 from matplotlib._api.deprecation import MatplotlibDeprecationWarning
 from tqdm import tqdm
 
@@ -15,6 +17,20 @@ import gym_cellular_automata as gymca
 
 DEFAULT_UPDATES = 40
 DEFAULT_MILISECOND_FRAME = 80
+
+
+# Add at the beginning of the file, after imports
+def get_default_device():
+    """Get the default JAX device (GPU/TPU if available, else CPU)"""
+    return xla_bridge.get_backend().platform
+
+
+# Set default device platform
+DEFAULT_PLATFORM = get_default_device()
+print(f"Default platform: {DEFAULT_PLATFORM}")
+
+# Configure JAX to use the default platform
+jax.config.update("jax_platform_name", DEFAULT_PLATFORM)
 
 
 def get_make_frame(env: Env):
