@@ -12,6 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 from tqdm import tqdm
+import json
 
 from flax.linen.initializers import constant, orthogonal
 from flax.training.train_state import TrainState
@@ -38,7 +39,7 @@ class Args:
     """if toggled, cuda will be enabled by default"""
     track: bool = False
     """if toggled, this experiment will be tracked with Weights and Biases"""
-    wandb_project_name: str = "cleanRL"
+    wandb_project_name: str = "firefighter"
     """the wandb's project name"""
     wandb_entity: str = None
     """the entity (team) of wandb's project"""
@@ -46,7 +47,7 @@ class Args:
     """whether to capture videos of the agent performances (check out `videos` folder)"""
 
     # Algorithm specific arguments
-    env_id: str = "Breakout-v5"
+    env_id: str = "Firefighter"
     """the id of the environment"""
     total_timesteps: int = 10000000
     """total timesteps of the experiments"""
@@ -252,8 +253,14 @@ def run_rollout_loop(env, num_iterations):
     )
     # handle, recv, send, step_env = envs.xla()
 
-    def step_env_wrappeed(episode_stats, action):
-        next_obs, reward, next_done, trunaced, info = env.step(action)
+    def step_env_wrapped(episode_stats, action, obs, info):
+        (
+            next_obs,
+            reward,
+            next_done,
+            truncated,
+            next_info,
+        ) = env.stateless_step(action, obs, info)
         new_episode_return = episode_stats.episode_returns + info["reward"]
         new_episode_length = episode_stats.episode_lengths + 1
         episode_stats = episode_stats.replace(
@@ -275,7 +282,12 @@ def run_rollout_loop(env, num_iterations):
                 episode_stats.returned_episode_lengths,
             ),
         )
-        return episode_stats, (next_obs, reward, next_done, info)
+        return episode_stats, (
+            next_obs,
+            reward,
+            next_done,
+            next_info,
+        )
 
     # assert isinstance(
     #     envs.action_space, gym.spaces.Discrete
@@ -401,20 +413,26 @@ def run_rollout_loop(env, num_iterations):
     @jax.jit
     def get_action_and_value2(
         params: flax.core.FrozenDict,
-        x: np.ndarray,
+        x: tuple[np.ndarray, np.ndarray],
         action: np.ndarray,
     ):
         """calculate value, logprob of supplied `action`, and entropy"""
-        hidden = network.apply(params.network_params, x)
-        logits = actor.apply(params.actor_params, hidden)
-        logprob = jax.nn.log_softmax(logits)[jnp.arange(action.shape[0]), action]
+        grid, position = x
+        hidden = network.apply(params["network_params"], grid, position)
+        logits_set = actor.apply(params["actor_params"], hidden)
         # normalize the logits https://gregorygundersen.com/blog/2020/02/09/log-sum-exp/
-        logits = logits - jax.scipy.special.logsumexp(logits, axis=-1, keepdims=True)
-        logits = logits.clip(min=jnp.finfo(logits.dtype).min)
-        p_log_p = logits * jax.nn.softmax(logits)
-        entropy = -p_log_p.sum(-1)
-        value = critic.apply(params.critic_params, hidden).squeeze()
-        return logprob, entropy, value
+        entropies = []
+        logprobs = []
+        for i, l in enumerate(logits_set):
+            logprob = jax.nn.log_softmax(l)[jnp.arange(action.shape[0]), action[:, i]]
+            logprobs.append(logprob)
+            logits = l - jax.scipy.special.logsumexp(l, axis=-1, keepdims=True)
+            logits = logits.clip(min=jnp.finfo(logits.dtype).min)
+            p_log_p = logits * jax.nn.softmax(logits)
+            entropy = -p_log_p.sum(-1)
+            entropies.append(entropy)
+        value = critic.apply(params["critic_params"], hidden).squeeze()
+        return jnp.stack(logprobs, axis=-1), jnp.stack(entropies, axis=-1), value
 
     @jax.jit
     def compute_gae(
@@ -424,9 +442,15 @@ def run_rollout_loop(env, num_iterations):
         storage: Storage,
     ):
         storage = storage.replace(advantages=storage.advantages.at[:].set(0.0))
+
+        grid, (ca_params, position, t) = env.observation_space.sample()
         next_value = critic.apply(
-            agent_state.params.critic_params,
-            network.apply(agent_state.params.network_params, next_obs),
+            agent_state.params["critic_params"],
+            network.apply(
+                agent_state.params["network_params"],
+                grid[None, ...],
+                position[None, ...],
+            ),
         ).squeeze()
         lastgaelam = 0
         for t in reversed(range(args.num_steps)):
@@ -456,8 +480,11 @@ def run_rollout_loop(env, num_iterations):
         storage: Storage,
         key: jax.random.PRNGKey,
     ):
-        b_obs = storage.obs.reshape((-1,) + env.observation_space.shape)
-        b_logprobs = storage.logprobs.reshape(-1)
+        b_grid_obs = storage.grid_obs.reshape((-1,) + env.observation_space[0].shape)
+        b_position_obs = storage.position_obs.reshape(
+            (-1,) + env.observation_space[1][1].shape
+        )
+        b_logprobs = storage.logprobs.reshape((-1,) + env.action_space.shape)
         b_actions = storage.actions.reshape((-1,) + env.action_space.shape)
         b_advantages = storage.advantages.reshape(-1)
         b_returns = storage.returns.reshape(-1)
@@ -473,11 +500,16 @@ def run_rollout_loop(env, num_iterations):
                     mb_advantages.std() + 1e-8
                 )
 
+            mb_advantages = mb_advantages[:, None]
+
             # Policy loss
             pg_loss1 = -mb_advantages * ratio
             pg_loss2 = -mb_advantages * jnp.clip(
                 ratio, 1 - args.clip_coef, 1 + args.clip_coef
             )
+            # TODO: I'm very suspicious of this line. We are meaning the two
+            # logprobs for the actions together. Soon as we add extensions this
+            # will be a third action. We need to confirm this is right.
             pg_loss = jnp.maximum(pg_loss1, pg_loss2).mean()
 
             # Value loss
@@ -502,7 +534,7 @@ def run_rollout_loop(env, num_iterations):
                 (loss, (pg_loss, v_loss, entropy_loss, approx_kl)), grads = (
                     ppo_loss_grad_fn(
                         agent_state.params,
-                        b_obs[mb_inds],
+                        (b_grid_obs[mb_inds], b_position_obs[mb_inds]),
                         b_actions[mb_inds],
                         b_logprobs[mb_inds],
                         b_advantages[mb_inds],
@@ -516,7 +548,14 @@ def run_rollout_loop(env, num_iterations):
     global_step = 0
     start_time = time.time()
     next_obs, report = env.reset()
-    next_done = np.zeros(args.num_envs)
+    next_done = jnp.full(args.num_envs, False)
+    next_info = {
+        "TimeLimit.truncated": jnp.full(args.num_envs, False),
+        "terminated": jnp.full(args.num_envs, False),
+        "steps_elapsed": jnp.zeros(args.num_envs),
+        "reward_accumulated": jnp.zeros(args.num_envs),
+        "reward": jnp.zeros(args.num_envs),
+    }
 
     @jax.jit
     def rollout(
@@ -524,30 +563,56 @@ def run_rollout_loop(env, num_iterations):
         episode_stats,
         next_obs,
         next_done,
+        next_info,
         storage,
         key,
         global_step,
     ):
-        for step in range(0, args.num_steps):
+        # Remove @jax.jit and use jax.lax.fori_loop instead
+        def body_fun(step, carry):
+            (
+                agent_state,
+                episode_stats,
+                next_obs,
+                next_done,
+                next_info,
+                storage,
+                key,
+                global_step,
+            ) = carry
+
             global_step += args.num_envs
             storage, action, key = get_action_and_value(
                 agent_state, next_obs, next_done, storage, step, key
             )
 
-            # TRY NOT TO MODIFY: execute the game and log data.
-            episode_stats, (next_obs, reward, next_done, _) = step_env_wrappeed(
-                episode_stats, action
+            episode_stats, (next_obs, reward, next_done, next_info) = step_env_wrapped(
+                episode_stats, action, next_obs, next_info
             )
             storage = storage.replace(rewards=storage.rewards.at[step].set(reward))
-        return (
+
+            return (
+                agent_state,
+                episode_stats,
+                next_obs,
+                next_done,
+                next_info,
+                storage,
+                key,
+                global_step,
+            )
+
+        init_carry = (
             agent_state,
             episode_stats,
             next_obs,
             next_done,
+            next_info,
             storage,
             key,
             global_step,
         )
+        return jax.lax.fori_loop(0, args.num_steps, body_fun, init_carry)
 
     for iteration in tqdm(range(1, num_iterations + 1), desc="Training"):
         iteration_time_start = time.time()
@@ -556,6 +621,7 @@ def run_rollout_loop(env, num_iterations):
             episode_stats,
             next_obs,
             next_done,
+            next_info,
             storage,
             key,
             global_step,
@@ -564,6 +630,7 @@ def run_rollout_loop(env, num_iterations):
             episode_stats,
             next_obs,
             next_done,
+            next_info,
             storage,
             key,
             global_step,
@@ -608,7 +675,10 @@ def run_rollout_loop(env, num_iterations):
             global_step,
         )
 
+    # Save grid observations to JSON file
+
+    grid_obs_list = jax.device_get(storage.grid_obs).tolist()
+    with open(f"runs/{run_name}_grid_obs.json", "w") as f:
+        json.dump(grid_obs_list, f)
     # envs.close()
     writer.close()
-
-    return rollout_loop

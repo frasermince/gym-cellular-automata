@@ -38,21 +38,21 @@ class RepeatCAJax(Operator):
         time_state = self.t_perception((grid, context))
         time_taken = time_action + time_state
 
-        accu_time += time_taken
-        accu_time, repeats = jnp.modf(accu_time)
-        repeats = repeats.reshape(()).astype(jnp.int32)
+        new_accu_time = accu_time + time_taken
+        modf_accu_time, repeats = jnp.modf(new_accu_time)
+        reshaped_repeats = repeats.reshape(()).astype(jnp.int32)
 
         def _ca_step(carry):
-            grid, action, ca_params = carry
-            new_grid, ca_params = self.ca(grid, action, ca_params)
-            return (new_grid, action, ca_params)
+            grid, action, carry_ca_params = carry
+            new_grid, new_ca_params = self.ca(grid, action, carry_ca_params)
+            return (new_grid, action, new_ca_params)
 
         # ... in the main function ...
-        grid, _, ca_params = lax.fori_loop(
+        grid, _, new_ca_params = lax.fori_loop(
             0,
-            jnp.asarray(repeats, dtype=jnp.int32),
+            jnp.asarray(reshaped_repeats, dtype=jnp.int32),
             lambda i, carry: _ca_step(carry),
             (grid, action, ca_params),
         )
 
-        return grid, (ca_params, accu_time)
+        return grid, (new_ca_params, modf_accu_time)

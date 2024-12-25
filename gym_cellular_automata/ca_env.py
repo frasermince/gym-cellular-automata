@@ -25,7 +25,7 @@ class CAEnv(ABC, gym.Env):
         if self._debug:
             print("Perhaps you forgot to do env.reset()")
 
-    def step(self, action):
+    def step(self, action, info):
         # if not self.done.item():
         # MDP Transition
         self.state = self.grid, self.context = self.MDP(self.grid, action, self.context)
@@ -38,16 +38,15 @@ class CAEnv(ABC, gym.Env):
         reward = self._award()
         terminated = self.done
         truncated = False
-        info = self._report()
         info["reward"] = reward
         info["terminated"] = terminated
         info["TimeLimit.truncated"] = truncated
 
         # Status method
-        self.steps_elapsed += 1
-        self.reward_accumulated += reward
+        info["steps_elapsed"] += 1
+        info["reward_accumulated"] += reward
 
-        return obs, reward, terminated, truncated, info
+        return obs, reward, jnp.array([terminated]), truncated, info
 
         # else:
         #     if self.steps_beyond_done == 0:

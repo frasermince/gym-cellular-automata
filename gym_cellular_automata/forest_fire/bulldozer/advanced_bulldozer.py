@@ -385,6 +385,35 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
     # Gym API
     # step, reset & seed methods inherited from parent class
 
+    def stateless_step(self, action, obs, info):
+        # MDP Transition
+        grid, context = obs
+        next_grid, next_context = self.MDP(grid, action, context)
+        next_state = (next_grid, next_context)
+
+        # Check for termination
+        next_done = self._is_done()
+
+        # Gym API Formatting
+        obs = next_state
+        reward = self._award()
+        terminated = next_done
+        truncated = False
+        info["reward"] = jnp.array([reward])
+        info["terminated"] = jnp.array([terminated])
+        info["TimeLimit.truncated"] = jnp.array([truncated])
+
+        info["steps_elapsed"] = info["steps_elapsed"] + jnp.ones(1)
+        info["reward_accumulated"] = info["reward_accumulated"] + jnp.array([reward])
+
+        return (
+            obs,
+            reward,
+            jnp.array([terminated]),
+            truncated,
+            info,
+        )
+
     def render(self, mode="human"):
         return render(self)
 
@@ -434,7 +463,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         return -(f / (t + f))
 
     def _is_done(self):
-        self.done = jnp.invert(jnp.any(self.grid == self._fire))
+        return jnp.invert(jnp.any(self.grid == self._fire))
 
     def _report(self):
         return {"hit": self.modify.hit}
@@ -502,7 +531,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
                 "fire_age": self._fire_age,
             },
             init_position,
-            jnp.array(init_time, dtype=jnp.float32),
+            jnp.array([init_time], dtype=jnp.float32),
         )
 
         return init_context
@@ -524,15 +553,22 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             [self._shooting_timings[k] for k in sorted(self._shooting_timings.keys())]
         )
 
-        def time_per_action(action):
+        @jit
+        def time_per_action(action, movement_timings, shooting_timings):
 
-            time_on_move = self._jax_movement_timings[action[0]]
-            time_on_shoot = self._jax_shooting_timings[action[1]]
+            time_on_move = movement_timings[action[0]]
+            time_on_shoot = shooting_timings[action[1]]
 
             return time_on_move + time_on_shoot
 
-        self.time_per_action = time_per_action
-        self.time_per_state = lambda s: self._t_env_any
+        # Create a wrapper that provides the timings
+        def time_per_action_wrapper(action):
+            return time_per_action(
+                action, self._jax_movement_timings, self._jax_shooting_timings
+            )
+
+        self.time_per_action = time_per_action_wrapper
+        self.time_per_state = lambda s: jnp.array(self._t_env_any)
 
     def _parse_wind(self, windD: dict) -> np.ndarray:
         from gymnasium import spaces
