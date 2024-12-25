@@ -11,7 +11,7 @@ from gym_cellular_automata.forest_fire.operators import (
     Modify,
     Move,
     MoveModify,
-    RepeatCA,
+    RepeatCAJax,
     PartiallyObservableForestFire,
     PartiallyObservableForestFireJax,
 )
@@ -377,7 +377,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
 
         # Composite Operators
         self.move_modify = MoveModify(self.move, self.modify, **self.move_modify_space)
-        self.repeater = RepeatCA(
+        self.repeater = RepeatCAJax(
             self.ca, self.time_per_action, self.time_per_state, **self.repeater_space
         )
         self._MDP = MDP(self.repeater, self.move_modify, **self.MDP_space)
@@ -516,12 +516,17 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
 
         self._movement_timings[self._moves["not_move"]] = self._t_act_none
         self._shooting_timings[self._shoots["none"]] = self._t_act_none
+        self._jax_movement_timings = jnp.array(
+            [self._movement_timings[k] for k in sorted(self._movement_timings.keys())]
+        )
+        self._jax_shooting_timings = jnp.array(
+            [self._shooting_timings[k] for k in sorted(self._shooting_timings.keys())]
+        )
 
         def time_per_action(action):
-            move, shoot = action
 
-            time_on_move = self._movement_timings[int(move)]
-            time_on_shoot = self._shooting_timings[int(shoot)]
+            time_on_move = self._jax_movement_timings[action[0]]
+            time_on_shoot = self._jax_shooting_timings[action[1]]
 
             return time_on_move + time_on_shoot
 
@@ -558,12 +563,12 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         )
         self.time_space = spaces.Box(0.0, float("inf"), shape=tuple(), dtype=TYPE_BOX)
 
-        self.context_space = spaces.Dict(
-            {
-                "ca_params": self.ca_params_space,
-                "position": self.position_space,
-                "time": self.time_space,
-            }
+        self.context_space = spaces.Tuple(
+            (
+                self.ca_params_space,
+                self.position_space,
+                self.time_space,
+            )
         )
 
         # RL spaces
@@ -627,8 +632,16 @@ class MDP(Operator):
         self.suboperators = self.repeat_ca, self.move_modify
 
     def update(self, grid, action, context):
+        import pdb
+
+        pdb.set_trace
+
         amove, ashoot = action
         ca_params, position, time = context
+
+        import pdb
+
+        pdb.set_trace
 
         grid, (ca_params, time) = self.repeat_ca(grid, action, (ca_params, time))
         grid, position = self.move_modify(grid, action, position)

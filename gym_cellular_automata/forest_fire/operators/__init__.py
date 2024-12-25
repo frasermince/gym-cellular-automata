@@ -12,3 +12,4 @@ from gym_cellular_automata.forest_fire.operators.move_modify import (
     MoveModify,
 )
 from gym_cellular_automata.forest_fire.operators.repeat_ca import RepeatCA
+from gym_cellular_automata.forest_fire.operators.repeat_ca_jax import RepeatCAJax

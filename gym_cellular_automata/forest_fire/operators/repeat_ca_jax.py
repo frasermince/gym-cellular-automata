@@ -5,9 +5,11 @@ import numpy as np
 
 from gym_cellular_automata._config import TYPE_BOX
 from gym_cellular_automata.operator import Operator
+import jax.numpy as jnp
+import jax.lax as lax
 
 
-class RepeatCA(Operator):
+class RepeatCAJax(Operator):
     grid_dependant = True
     action_dependant = True
     context_dependant = True
@@ -37,9 +39,20 @@ class RepeatCA(Operator):
         time_taken = time_action + time_state
 
         accu_time += time_taken
-        me, repeats = math.modf(accu_time)
+        accu_time, repeats = jnp.modf(accu_time)
+        repeats = repeats.reshape(()).astype(jnp.int32)
 
-        for repeat in range(int(repeats)):
-            grid, ca_params = self.ca(grid, action, ca_params)
+        def _ca_step(carry):
+            grid, action, ca_params = carry
+            new_grid, ca_params = self.ca(grid, action, ca_params)
+            return (new_grid, action, ca_params)
 
-        return grid, (ca_params, np.array(accu_time, dtype=TYPE_BOX))
+        # ... in the main function ...
+        grid, _, ca_params = lax.fori_loop(
+            0,
+            jnp.asarray(repeats, dtype=jnp.int32),
+            lambda i, carry: _ca_step(carry),
+            (grid, action, ca_params),
+        )
+
+        return grid, (ca_params, accu_time)

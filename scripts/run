@@ -14,6 +14,7 @@ from matplotlib._api.deprecation import MatplotlibDeprecationWarning
 from tqdm import tqdm
 
 import gym_cellular_automata as gymca
+from gym_cellular_automata.agents.jax_ppo import run_rollout_loop
 
 DEFAULT_UPDATES = 40
 DEFAULT_MILISECOND_FRAME = 80
@@ -33,17 +34,18 @@ print(f"Default platform: {DEFAULT_PLATFORM}")
 jax.config.update("jax_platform_name", DEFAULT_PLATFORM)
 
 
-def get_make_frame(env: Env):
+def get_make_frame(env: Env, save_gif: bool):
     env.reset()
 
     warnings.filterwarnings("ignore", category=MatplotlibDeprecationWarning)
 
     @gif.frame
     def make_frame():
-        env.render()
+        if save_gif:
+            env.render()
         step_tuple = env.step(env.action_space.sample())
 
-        if done := step_tuple[2]:
+        if step_tuple[2]:  # if done
             env.reset()
 
     return make_frame
@@ -55,8 +57,10 @@ def generate_gif(
     each: int = 1,
     updates: int = 50,
     duration_between: int = 50,
+    save_gif: bool = True,
 ):
-    if isinstance(name, str):
+    paths = {}
+    if save_gif and isinstance(name, str):
         # Create main gifs directory
         base_folder = Path().cwd() / "gifs"
         base_folder.mkdir(exist_ok=True)
@@ -66,60 +70,63 @@ def generate_gif(
         env_folder.mkdir(exist_ok=True)
 
         # Set paths for all files
-        gif_path = env_folder / f"{name}.gif"
-        mp4_path = env_folder / f"{name}.mp4"
-        altitude_path = env_folder / f"{name}_altitude.png"
-        density_path = env_folder / f"{name}_density.png"
-        vegitation_path = env_folder / f"{name}_vegitation.png"
-    if name == "advanced_bulldozer":
+        paths = {
+            "gif": env_folder / f"{name}.gif",
+            "mp4": env_folder / f"{name}.mp4",
+            "altitude": env_folder / f"{name}_altitude.png",
+            "density": env_folder / f"{name}_density.png",
+            "vegitation": env_folder / f"{name}_vegitation.png",
+        }
+
+    if save_gif and name == "advanced_bulldozer":
         # Generate and save altitude plot
         altitude_plot = env.altitude_render()
-        altitude_plot.savefig(altitude_path)
-        # altitude_plot.close()
+        altitude_plot.savefig(paths["altitude"])
 
         # Generate and save density plot
         density_plot = env.density_render()
-        density_plot.savefig(density_path)
+        density_plot.savefig(paths["density"])
 
         vegitation_plot = env.vegitation_render()
-        vegitation_plot.savefig(vegitation_path)
+        vegitation_plot.savefig(paths["vegitation"])
 
     import time
 
     start_time = time.time()
 
-    make_frame = get_make_frame(env)
+    make_frame = get_make_frame(env, save_gif)
     frames = []
 
-    for i in tqdm(range(updates), desc="Generating frames"):
-        if i % each == 0:
-            frames.append(make_frame())
+    run_rollout_loop(env, updates)
+    # for i in tqdm(range(updates), desc="Generating frames"):
+    #     if i % each == 0:
+    #         frames.append(make_frame())
 
     end_time = time.time()
-    # Save gif and mp4
-    print(f"Generation completed in {end_time - start_time:.2f} seconds")
-    gif.save(frames, str(gif_path), duration=duration_between)
-    clip = mp.VideoFileClip(str(gif_path))
-    clip.write_videofile(mp4_path, fps=30, threads=1, codec="libx264")
-
-    # density_plot.close()
-
     print(f"Generation completed in {end_time - start_time:.2f} seconds")
 
+    if save_gif:
+        gif.save(frames, str(paths["gif"]), duration=duration_between)
+        clip = mp.VideoFileClip(str(paths["gif"]))
+        clip.write_videofile(paths["mp4"], fps=30, threads=1, codec="libx264")
 
-def generate_gif_envs(updates: int, duration_frame: int):
+    print(f"Generation completed in {end_time - start_time:.2f} seconds")
+
+
+def generate_gif_envs(updates: int, duration_frame: int, save_gif: bool = True):
     prototypes = ["helicopter", "bulldozer", "advanced_bulldozer"]
 
     proto_id = 2
     name = prototypes[proto_id]
     ProtoEnv = gymca.prototypes[proto_id]
-    env = ProtoEnv(nrows=200, ncols=200)
+    env = ProtoEnv(nrows=256, ncols=256)
 
     generate_gif(
         env,
         name,
         updates=updates,
         duration_between=duration_frame,
+        save_gif=save_gif,
     )
 
 
@@ -143,7 +150,14 @@ parser.add_argument(
     "-d",
     type=float,
     default=DEFAULT_MILISECOND_FRAME,
-    help=f"Time elapsed in miliseconds between each frame of the animation. {DEFAULT_MILISECOND_FRAME}",
+    help=f"Time elapsed in miliseconds between each frame of the animation. "
+    f"{DEFAULT_MILISECOND_FRAME}",
+)
+
+parser.add_argument(
+    "--no-gif",
+    action="store_true",
+    help="Run without generating gif files",
 )
 
 
@@ -151,4 +165,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     gif.options.matplotlib["dpi"] = 200
-    generate_gif_envs(args.steps, args.duration)
+    generate_gif_envs(args.steps, args.duration, not args.no_gif)
