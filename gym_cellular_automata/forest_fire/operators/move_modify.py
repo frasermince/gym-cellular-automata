@@ -49,11 +49,10 @@ class Move(Operator):
             valid_left  = col > 0
             valid_right = col < (ncols - 1)
 
-            row = jnp.where((action in self.up_set) & valid_up, row - 1, row)
-            row = jnp.where((action in self.down_set) & valid_down, row + 1, row)
-            col = jnp.where((action in self.left_set) & valid_left, col - 1, col)
-            col = jnp.where((action in self.right_set) & valid_right, col + 1, col)
-
+            row = jnp.where(jnp.any(action == jnp.array(list(self.up_set))) & valid_up, row - 1, row)
+            row = jnp.where(jnp.any(action == jnp.array(list(self.down_set))) & valid_down, row + 1, row)
+            col = jnp.where(jnp.any(action == jnp.array(list(self.left_set))) & valid_left, col - 1, col)
+            col = jnp.where(jnp.any(action == jnp.array(list(self.right_set))) & valid_right, col + 1, col)
             # fmt: on
 
             return jnp.array([row, col])

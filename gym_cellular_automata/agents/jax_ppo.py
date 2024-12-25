@@ -11,6 +11,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
+from tqdm import tqdm
 
 from flax.linen.initializers import constant, orthogonal
 from flax.training.train_state import TrainState
@@ -94,9 +95,7 @@ class Network(nn.Module):
     def __call__(self, grid, position):
         # grid = jnp.transpose(grid, (0, 2, 3, 1))
         # Add a dimension of ones to the grid
-        print("GRID SHAPE", grid.shape)
         grid = grid[..., None]
-        print("GRID SHAPE", grid.shape)
 
         grid = nn.Conv(
             32,
@@ -108,7 +107,6 @@ class Network(nn.Module):
         )(grid)
 
         grid = nn.relu(grid)
-        print("GRID SHAPE", grid.shape)
         grid = nn.Conv(
             64,
             kernel_size=(4, 4),
@@ -118,7 +116,6 @@ class Network(nn.Module):
             bias_init=constant(0.0),
         )(grid)
         grid = nn.relu(grid)
-        print("GRID SHAPE", grid.shape)
         grid = nn.Conv(
             64,
             kernel_size=(3, 3),
@@ -129,20 +126,15 @@ class Network(nn.Module):
         )(grid)
 
         grid = nn.relu(grid)
-        print("GRID SHAPE", grid.shape)
 
         grid_features = grid.reshape((grid.shape[0], -1))
-        print("GRID SHAPE", grid_features.shape)
         grid_features = nn.Dense(256)(grid_features)  # Reduce to more manageable size
         grid_features = nn.relu(grid_features)
-        print("GRID SHAPE", grid_features.shape)
 
         # Process position input
-        print("POSITION SHAPE", position.shape)
         position_features = nn.Dense(
             256, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0)
         )(position)
-        print("POSITION SHAPE", position_features.shape)
         position_features = nn.relu(position_features)
 
         # Combine features
@@ -557,7 +549,7 @@ def run_rollout_loop(env, num_iterations):
             global_step,
         )
 
-    for iteration in range(1, num_iterations + 1):
+    for iteration in tqdm(range(1, num_iterations + 1), desc="Training"):
         iteration_time_start = time.time()
         (
             agent_state,

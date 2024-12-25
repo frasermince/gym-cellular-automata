@@ -472,7 +472,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         grid[r, c] = self._fire
         self._fire_age = self._fire_age.at[r, c].set(10)
 
-        return jnp.array(grid, dtype=TYPE_INT)
+        return jnp.array(grid, dtype=jnp.int32)
 
     def _initial_context_distribution(self):
         init_time = jnp.array(0.0)
@@ -496,13 +496,13 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
                 "vegetation": self._vegitation,
                 "altitude": self._altitude,
                 "slope": self._slope,
-                "p_fire": jnp.array(self._p_fire, dtype=TYPE_BOX),
-                "p_tree": jnp.array(self._p_tree, dtype=TYPE_BOX),
-                "p_wind_change": jnp.array(self._p_wind_change, dtype=TYPE_BOX),
+                "p_fire": jnp.array(self._p_fire, dtype=jnp.float32),
+                "p_tree": jnp.array(self._p_tree, dtype=jnp.float32),
+                "p_wind_change": jnp.array(self._p_wind_change, dtype=jnp.float32),
                 "fire_age": self._fire_age,
             },
             init_position,
-            jnp.array(init_time, dtype=TYPE_BOX),
+            jnp.array(init_time, dtype=jnp.float32),
         )
 
         return init_context
@@ -623,7 +623,9 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         # Assuming your grid contains values 0, 1, 2, etc.
         # Create a dict with counts for each possible value
         counts = {
-            val: jnp.sum(grid == val) for val in [self._empty, self._tree, self._fire]
+            self._empty: jnp.sum(grid == self._empty),
+            self._tree: jnp.sum(grid == self._tree),
+            self._fire: jnp.sum(grid == self._fire),
         }
 
         return counts
@@ -649,11 +651,8 @@ class MDP(Operator):
         amove, ashoot = action
         ca_params, position, time = context
 
-        import pdb
-
-        pdb.set_trace
-
         grid, (ca_params, time) = self.repeat_ca(grid, action, (ca_params, time))
+
         grid, position = self.move_modify(grid, action, position)
 
         return grid, (ca_params, position, time)
