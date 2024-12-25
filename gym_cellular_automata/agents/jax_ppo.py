@@ -261,9 +261,6 @@ def run_rollout_loop(env, num_iterations):
     # handle, recv, send, step_env = envs.xla()
 
     def step_env_wrappeed(episode_stats, action):
-        import pdb
-
-        pdb.set_trace()
         next_obs, reward, next_done, trunaced, info = env.step(action)
         new_episode_return = episode_stats.episode_returns + info["reward"]
         new_episode_length = episode_stats.episode_lengths + 1

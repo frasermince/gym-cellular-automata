@@ -1,6 +1,6 @@
 from typing import Dict, Set
 
-import jax.numpy as np
+import jax.numpy as jnp
 from gymnasium import logger, spaces
 
 from gym_cellular_automata.operator import Operator
@@ -36,9 +36,9 @@ class Move(Operator):
 
     def update(self, grid, action, context):
         # A common input is a scalar of type ndarray
-        action = int(action)
+        # action = int(action)
 
-        def get_new_position(position: tuple) -> np.array:
+        def get_new_position(position: tuple) -> jnp.array:
             row, col = position
 
             nrows, ncols = grid.shape
@@ -49,20 +49,14 @@ class Move(Operator):
             valid_left  = col > 0
             valid_right = col < (ncols - 1)
 
-            if (action in self.up_set)    and valid_up:
-                row -= 1
+            row = jnp.where((action in self.up_set) & valid_up, row - 1, row)
+            row = jnp.where((action in self.down_set) & valid_down, row + 1, row)
+            col = jnp.where((action in self.left_set) & valid_left, col - 1, col)
+            col = jnp.where((action in self.right_set) & valid_right, col + 1, col)
 
-            if (action in self.down_set)  and valid_down:
-                row += 1
-
-            if (action in self.left_set)  and valid_left:
-                col -= 1
-
-            if (action in self.right_set) and valid_right:
-                col += 1
             # fmt: on
 
-            return np.array([row, col])
+            return jnp.array([row, col])
 
         return grid, get_new_position(context)
 
@@ -80,17 +74,27 @@ class Modify(Operator):
         super().__init__(*args, **kwargs)
 
         self.effects = effects
+        # Convert effects dict to arrays during initialization
+        self.effect_keys = jnp.array(list(effects.keys()))
+        self.effect_values = jnp.array(list(effects.values()))
 
     def update(self, grid, action, context):
         self.hit = False
 
         row, col = context
-        cell_value = int(grid[row, col])
 
-        if action:
-            if cell_value in self.effects:
-                grid = grid.at[row, col].set(self.effects[cell_value])
-                self.hit = True
+        cell_value = grid[row, col]
+
+        matches = cell_value == self.effect_keys
+        new_value = jnp.sum(matches * self.effect_values)
+
+        # Only modify if action is True and we have an effect
+        has_effect = jnp.any(matches)
+        should_modify = action & has_effect
+
+        grid = grid.at[row, col].set(
+            jnp.where(should_modify, new_value, cell_value).reshape(())
+        )
 
         return grid, context
 
@@ -127,7 +131,8 @@ class MoveModify(Operator):
                 self.context_space = self.move.context_space
 
     def update(self, grid, subactions, position):
-        move_action, modify_action = subactions
+        move_action = subactions[0]
+        modify_action = subactions[1]
 
         grid, position = self.move(grid, move_action, position)
         grid, position = self.modify(grid, modify_action, position)

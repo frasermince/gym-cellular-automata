@@ -428,12 +428,13 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         t / (e + t + f)
         """
         counts = self.count_cells(self.grid)
+
         t = counts[self._tree]
         f = counts[self._fire]
         return -(f / (t + f))
 
     def _is_done(self):
-        self.done = not bool(np.any(self.grid == self._fire))
+        self.done = jnp.invert(jnp.any(self.grid == self._fire))
 
     def _report(self):
         return {"hit": self.modify.hit}
@@ -615,6 +616,18 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             "context_space": self.context_space,
         }
 
+    def count_cells(self, grid=None):
+        """Returns dict of cell counts by using jax.numpy operations"""
+
+        grid = self.grid if grid is None else grid
+        # Assuming your grid contains values 0, 1, 2, etc.
+        # Create a dict with counts for each possible value
+        counts = {
+            val: jnp.sum(grid == val) for val in [self._empty, self._tree, self._fire]
+        }
+
+        return counts
+
 
 class MDP(Operator):
     grid_dependant = True
@@ -632,9 +645,6 @@ class MDP(Operator):
         self.suboperators = self.repeat_ca, self.move_modify
 
     def update(self, grid, action, context):
-        import pdb
-
-        pdb.set_trace
 
         amove, ashoot = action
         ca_params, position, time = context

@@ -4,6 +4,7 @@ from typing import Optional
 import gymnasium as gym
 from gymnasium import logger
 from gymnasium.utils import seeding
+from jax import numpy as jnp
 
 
 class CAEnv(ABC, gym.Env):
@@ -25,46 +26,47 @@ class CAEnv(ABC, gym.Env):
             print("Perhaps you forgot to do env.reset()")
 
     def step(self, action):
-        if not self.done:
-            # MDP Transition
-            self.state = self.grid, self.context = self.MDP(
-                self.grid, action, self.context
-            )
+        # if not self.done.item():
+        # MDP Transition
+        self.state = self.grid, self.context = self.MDP(self.grid, action, self.context)
 
-            # Check for termination
-            self._is_done()
+        # Check for termination
+        self._is_done()
 
-            # Gym API Formatting
-            obs = self.state
-            reward = self._award()
-            terminated = self.done
-            truncated = False
-            info = self._report()
+        # Gym API Formatting
+        obs = self.state
+        reward = self._award()
+        terminated = self.done
+        truncated = False
+        info = self._report()
+        info["reward"] = reward
+        info["terminated"] = terminated
+        info["TimeLimit.truncated"] = truncated
 
-            # Status method
-            self.steps_elapsed += 1
-            self.reward_accumulated += reward
+        # Status method
+        self.steps_elapsed += 1
+        self.reward_accumulated += reward
 
-            return obs, reward, terminated, truncated, info
+        return obs, reward, terminated, truncated, info
 
-        else:
-            if self.steps_beyond_done == 0:
-                logger.warn(
-                    "You are calling 'step()' even though this "
-                    "environment has already returned done = True. You "
-                    "should always call 'reset()' once you receive 'done = "
-                    "True' -- any further steps are undefined behavior."
-                )
+        # else:
+        #     if self.steps_beyond_done == 0:
+        #         logger.warn(
+        #             "You are calling 'step()' even though this "
+        #             "environment has already returned done = True. You "
+        #             "should always call 'reset()' once you receive 'done = "
+        #             "True' -- any further steps are undefined behavior."
+        #         )
 
-            self.steps_beyond_done += 1
+        #     self.steps_beyond_done += 1
 
-            # Graceful after termination
-            return self.state, 0.0, True, False, self._report()
+        #     # Graceful after termination
+        #     return self.state, 0.0, True, False, self._report()
 
     def reset(self, *, seed: Optional[int] = None, options: Optional[dict] = None):
         super().reset(seed=seed)
 
-        self.done = False
+        self.done = jnp.array(False)
         self.steps_elapsed = 0
         self.reward_accumulated = 0.0
         self.steps_beyond_done = 0
