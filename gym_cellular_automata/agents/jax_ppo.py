@@ -647,7 +647,12 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
         )
         return jax.lax.fori_loop(0, args.num_steps, body_fun, init_carry)
 
-    for iteration in tqdm(range(1, num_iterations + 1), desc="Training"):
+    progress_bar = tqdm(
+        range(1, num_iterations + 1),
+        desc="Training",
+        postfix={"SPS": "0", "avg_return": "0.0", "current_return": "0.0"},
+    )
+    for iteration in progress_bar:
         iteration_time_start = time.time()
         (
             agent_state,
@@ -678,11 +683,8 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
             jax.device_get(episode_stats.returned_episode_returns)
         )
         current_episodic_return = np.mean(jax.device_get(episode_stats.episode_returns))
-        print(
-            f"global_step={global_step}, avg_episodic_return={avg_episodic_return}, current_episodic_return={current_episodic_return}"
-        )
 
-        # TRY NOT TO MODIFY: record rewards for plotting purposes
+        # Record rewards and metrics
         writer.add_scalar(
             "charts/avg_episodic_return", avg_episodic_return, global_step
         )
@@ -701,18 +703,26 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
         writer.add_scalar("losses/entropy", entropy_loss.item(), global_step)
         writer.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
         writer.add_scalar("losses/loss", loss.item(), global_step)
-        print("SPS:", int(global_step / (time.time() - start_time)))
-        writer.add_scalar(
-            "charts/SPS", int(global_step / (time.time() - start_time)), global_step
-        )
+
+        sps = int(global_step / (time.time() - start_time))
+        writer.add_scalar("charts/SPS", sps, global_step)
         writer.add_scalar(
             "charts/SPS_update",
             int(num_envs * args.num_steps / (time.time() - iteration_time_start)),
             global_step,
         )
 
-    # Save grid observations to JSON file
+        # Update progress bar
+        progress_bar.set_postfix(
+            {
+                "SPS": sps,
+                "avg_return": f"{avg_episodic_return:.2f}",
+                "current_return": f"{current_episodic_return:.2f}",
+            },
+            refresh=True,
+        )
 
+    # Save grid observations to JSON file
     grid_obs_list = jax.device_get(storage.grid_obs).tolist()
     with open(f"runs/{run_name}_grid_obs.json", "w") as f:
         json.dump(grid_obs_list, f)

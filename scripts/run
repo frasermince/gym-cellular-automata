@@ -58,6 +58,7 @@ def generate_gif(
     updates: int = 50,
     duration_between: int = 50,
     save_gif: bool = True,
+    num_envs: int = 8,
 ):
     paths = {}
     if save_gif and isinstance(name, str):
@@ -97,7 +98,7 @@ def generate_gif(
     make_frame = get_make_frame(env, save_gif)
     frames = []
 
-    run_rollout_loop(env, updates)
+    run_rollout_loop(env, updates, num_envs=num_envs)
     # for i in tqdm(range(updates), desc="Generating frames"):
     #     if i % each == 0:
     #         frames.append(make_frame())
@@ -113,13 +114,15 @@ def generate_gif(
     print(f"Generation completed in {end_time - start_time:.2f} seconds")
 
 
-def generate_gif_envs(updates: int, duration_frame: int, save_gif: bool = True):
+def generate_gif_envs(
+    updates: int, duration_frame: int, save_gif: bool = True, num_envs: int = 8
+):
     prototypes = ["helicopter", "bulldozer", "advanced_bulldozer"]
 
     proto_id = 2
     name = prototypes[proto_id]
     ProtoEnv = gymca.prototypes[proto_id]
-    env = ProtoEnv(nrows=256, ncols=256)
+    env = ProtoEnv(nrows=256, ncols=256, num_envs=num_envs)
 
     generate_gif(
         env,
@@ -127,6 +130,7 @@ def generate_gif_envs(updates: int, duration_frame: int, save_gif: bool = True):
         updates=updates,
         duration_between=duration_frame,
         save_gif=save_gif,
+        num_envs=num_envs,
     )
 
 
@@ -160,9 +164,16 @@ parser.add_argument(
     help="Run without generating gif files",
 )
 
+parser.add_argument(
+    "--num-envs",
+    "-n",
+    type=int,
+    default=8,
+)
+
 
 if __name__ == "__main__":
     args = parser.parse_args()
 
     gif.options.matplotlib["dpi"] = 200
-    generate_gif_envs(args.steps, args.duration, not args.no_gif)
+    generate_gif_envs(args.steps, args.duration, not args.no_gif, args.num_envs)
