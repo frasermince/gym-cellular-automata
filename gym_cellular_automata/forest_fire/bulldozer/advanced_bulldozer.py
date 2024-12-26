@@ -413,12 +413,12 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
 
     def stateless_step(self, action, obs, info):
         # MDP Transition
-        grid, (ca_params, position, time) = obs
+        grid, context = obs
 
-        shared_context = {k: ca_params[k] for k in self.shared_context_keys}
-        per_env_context = {k: ca_params[k] for k in self.per_env_context_keys}
+        shared_context = context["shared_context"]
+        per_env_context = context["per_env_context"]
         per_env_in_axes = {k: 0 for k in self.per_env_context_keys}
-        next_grid, next_per_env_context = jax.vmap(
+        next_grid, updated_context = jax.vmap(
             self.MDP,
             in_axes=(
                 0,
@@ -428,10 +428,20 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
                 0,
                 0,
             ),  # grid, action, per_env_context, shared_context
-        )(grid, action, per_env_context, shared_context, position, time)
-        per_env_portion, next_position, next_time = next_per_env_context
-        next_context = {**shared_context, **per_env_portion}, next_position, next_time
-        next_state = (next_grid, next_context)
+        )(
+            grid,
+            action,
+            per_env_context,
+            shared_context,
+            context["position"],
+            context["time"],
+        )
+        per_env_portion, next_position, next_time = updated_context
+        context["per_env_context"] = per_env_portion
+        context["position"] = next_position
+        context["time"] = next_time
+
+        next_state = (next_grid, context)
 
         # Check for termination
         next_done = jax.vmap(self._is_done, in_axes=0)(next_grid)
@@ -565,22 +575,31 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
                 self._pos_bull.append((r, c))
 
         init_position = jnp.array(self._pos_bull)
-        init_context = (
-            {
-                "winds": self._winds,
-                "wind_index": jnp.zeros(self.num_envs, dtype=jnp.int32),
-                "density": self._density,
-                "vegetation": self._vegitation,
-                "altitude": self._altitude,
-                "slope": self._slope,
-                "p_fire": jnp.array(self._p_fire, dtype=jnp.float32),
-                "p_tree": jnp.array(self._p_tree, dtype=jnp.float32),
-                "p_wind_change": jnp.array(self._p_wind_change, dtype=jnp.float32),
-                "fire_age": self._fire_age,
-            },
-            init_position,
-            init_time,
-        )
+
+        # Per-environment context parameters
+        per_env_context = {
+            "wind_index": jnp.zeros(self.num_envs, dtype=jnp.int32),
+            "density": self._density,
+            "vegetation": self._vegitation,
+            "altitude": self._altitude,
+            "slope": self._slope,
+            "fire_age": self._fire_age,
+        }
+
+        # Shared context parameters
+        shared_context = {
+            "winds": self._winds,
+            "p_fire": jnp.array(self._p_fire, dtype=jnp.float32),
+            "p_tree": jnp.array(self._p_tree, dtype=jnp.float32),
+            "p_wind_change": jnp.array(self._p_wind_change, dtype=jnp.float32),
+        }
+
+        init_context = {
+            "per_env_context": per_env_context,
+            "shared_context": shared_context,
+            "position": init_position,
+            "time": init_time,
+        }
 
         return init_context
 
@@ -643,25 +662,63 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             shape=(self.num_envs, self.nrows, self.ncols),
         )
 
-        self.ca_params_space = spaces.Box(0.0, 1.0, shape=(3, 3), dtype=TYPE_BOX)
+        # Create spaces for per-env context parameters
+        self.per_env_context_space = {
+            "wind_index": spaces.Box(
+                0, len(self._winds) - 1, shape=(self.num_envs,), dtype=TYPE_INT
+            ),
+            "density": spaces.Box(
+                0, 5, shape=(self.num_envs, self.nrows, self.ncols), dtype=TYPE_INT
+            ),
+            "vegetation": spaces.Box(
+                0, 5, shape=(self.num_envs, self.nrows, self.ncols), dtype=TYPE_INT
+            ),
+            "altitude": spaces.Box(
+                0.0,
+                float("inf"),
+                shape=(self.num_envs, self.nrows, self.ncols),
+                dtype=TYPE_BOX,
+            ),
+            "slope": spaces.Box(
+                -90.0,
+                90.0,
+                shape=(self.num_envs, self.nrows, self.ncols, 3, 3),
+                dtype=TYPE_BOX,
+            ),
+            "fire_age": spaces.Box(
+                0,
+                float("inf"),
+                shape=(self.num_envs, self.nrows, self.ncols),
+                dtype=TYPE_BOX,
+            ),
+        }
+
+        # Create spaces for shared context parameters
+        self.shared_context_space = {
+            "winds": spaces.Box(0.0, 1.0, shape=(8, 3, 3), dtype=TYPE_BOX),
+            "p_fire": spaces.Box(0.0, 1.0, shape=(), dtype=TYPE_BOX),
+            "p_tree": spaces.Box(0.0, 1.0, shape=(), dtype=TYPE_BOX),
+            "p_wind_change": spaces.Box(0.0, 1.0, shape=(), dtype=TYPE_BOX),
+        }
+
         self.position_space = spaces.Box(
             low=np.zeros((self.num_envs, 2), dtype=TYPE_INT),
             high=np.tile(np.array([self.nrows, self.ncols]), (self.num_envs, 1)),
             shape=(self.num_envs, 2),
             dtype=TYPE_INT,
         )
-        self.time_space = spaces.Box(0.0, float("inf"), shape=tuple(), dtype=TYPE_BOX)
+        self.time_space = spaces.Box(0.0, float("inf"), shape=(), dtype=TYPE_BOX)
 
-        self.context_space = spaces.Tuple(
-            (
-                self.ca_params_space,
-                self.position_space,
-                self.time_space,
-            )
+        self.context_space = spaces.Dict(
+            {
+                "per_env_context": spaces.Dict(self.per_env_context_space),
+                "shared_context": spaces.Dict(self.shared_context_space),
+                "position": self.position_space,
+                "time": self.time_space,
+            }
         )
 
         # RL spaces
-
         m, n = len(self._moves), len(self._shoots)
         self.action_space = spaces.MultiDiscrete(
             nvec=np.array([[m, n]] * self.num_envs),  # Shape becomes (num_envs, 2)
@@ -670,11 +727,10 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         self.observation_space = spaces.Tuple((self.grid_space, self.context_space))
 
         # Suboperators Spaces
-
         self.ca_space = {
             "grid_space": self.grid_space,
             "action_space": self.action_space,
-            "context_space": self.ca_params_space,
+            "context_space": self.context_space,
         }
 
         self.move_space = {
@@ -698,7 +754,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         self.repeater_space = {
             "grid_space": self.grid_space,
             "action_space": self.action_space,
-            "context_space": spaces.Tuple((self.ca_params_space, self.time_space)),
+            "context_space": self.context_space,
         }
 
         self.MDP_space = {
@@ -739,12 +795,11 @@ class MDP(Operator):
 
     def update(self, grid, action, per_env_context, shared_context, position, time):
         # Combine per-environment and shared context parameters
-        ca_params = {**per_env_context, **shared_context}
 
-        grid, (ca_params, time) = self.repeat_ca(grid, action, (ca_params, time))
+        grid, (next_per_env_context, time) = self.repeat_ca(
+            grid, action, per_env_context, shared_context, time
+        )
 
         grid, position = self.move_modify(grid, action, position)
-        # Only return the per-env components that were updated
-        next_per_env_context = {k: ca_params[k] for k in per_env_context.keys()}
 
         return grid, (next_per_env_context, position, time)

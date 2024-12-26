@@ -336,24 +336,26 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
     actor = Actor(action_dims=env.action_space.nvec[0])
     critic = Critic()
 
-    grid_sample, (ca_params, position, t) = env.observation_space.sample()
-    network_params = network.init(network_key, grid_sample, jnp.array(position))
-    grid_sample, (ca_params, position, t) = env.observation_space.sample()
+    grid_sample, context = env.observation_space.sample()
+    network_params = network.init(
+        network_key, grid_sample, jnp.array(context["position"])
+    )
+    grid_sample, context = env.observation_space.sample()
     actor_params = actor.init(
         actor_key,
         network.apply(
             network_params,
             grid_sample,
-            jnp.array(position),
+            jnp.array(context["position"]),
         ),
     )
-    grid_sample, (ca_params, position, t) = env.observation_space.sample()
+    grid_sample, context = env.observation_space.sample()
     critic_params = critic.init(
         critic_key,
         network.apply(
             network_params,
             grid_sample,
-            jnp.array(position),
+            jnp.array(context["position"]),
         ),
     )
 
@@ -379,10 +381,10 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
     critic.apply = jax.jit(critic.apply)
 
     # ALGO Logic: Storage setup
-    grid, (ca_params, position, t) = env.observation_space
+    grid, context = env.observation_space
     storage = Storage(
         grid_obs=jnp.zeros((args.num_steps,) + grid.shape),
-        position_obs=jnp.zeros((args.num_steps,) + position.shape),
+        position_obs=jnp.zeros((args.num_steps,) + context["position"].shape),
         actions=jnp.zeros(
             (args.num_steps,) + env.action_space.shape,
             dtype=jnp.int32,
@@ -405,7 +407,8 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
         key: jax.random.PRNGKey,
     ):
         """sample action, calculate value, logprob, entropy, and update storage"""
-        next_grid_obs, (ca_params, next_position_obs, t) = next_obs
+        next_grid_obs, context = next_obs
+        next_position_obs = context["position"]
         hidden = network.apply(
             agent_state.params["network_params"],
             next_grid_obs,
@@ -473,13 +476,13 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
     ):
         storage = storage.replace(advantages=storage.advantages.at[:].set(0.0))
 
-        grid, (ca_params, position, t) = env.observation_space.sample()
+        grid, context = env.observation_space.sample()
         next_value = critic.apply(
             agent_state.params["critic_params"],
             network.apply(
                 agent_state.params["network_params"],
                 grid,
-                position,
+                context["position"],
             ),
         ).squeeze()
         lastgaelam = 0
@@ -514,7 +517,7 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
             (-1,) + env.observation_space[0].shape[1:]
         )
         b_position_obs = storage.position_obs.reshape(
-            (-1,) + env.observation_space[1][1].shape[1:]
+            (-1,) + env.observation_space[1]["position"].shape[1:]
         )
         b_logprobs = storage.logprobs.reshape((-1,) + (env.action_space.shape[-1],))
         b_actions = storage.actions.reshape((-1,) + (env.action_space.shape[-1],))

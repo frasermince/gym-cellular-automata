@@ -31,11 +31,9 @@ class RepeatCAJax(Operator):
         self.suboperators = (self.ca,)
         self.deterministic = self.ca.deterministic
 
-    def update(self, grid, action, context):
-        ca_params, accu_time = context
-
+    def update(self, grid, action, per_env_context, shared_context, accu_time):
         time_action = self.t_acting(action)
-        time_state = self.t_perception((grid, context))
+        time_state = self.t_perception((grid, per_env_context, shared_context))
         time_taken = time_action + time_state
 
         new_accu_time = accu_time + time_taken
@@ -43,16 +41,18 @@ class RepeatCAJax(Operator):
         reshaped_repeats = repeats.reshape(()).astype(jnp.int32)
 
         def _ca_step(carry):
-            grid, action, carry_ca_params = carry
-            new_grid, new_ca_params = self.ca(grid, action, carry_ca_params)
-            return (new_grid, action, new_ca_params)
+            grid, action, carry_per_env, carry_shared = carry
+            new_grid, new_per_env, new_shared = self.ca(
+                grid, action, carry_per_env, carry_shared
+            )
+            return (new_grid, action, new_per_env, new_shared)
 
         # ... in the main function ...
-        grid, _, new_ca_params = lax.fori_loop(
+        grid, _, new_per_env, _ = lax.fori_loop(
             0,
             jnp.asarray(reshaped_repeats, dtype=jnp.int32),
             lambda i, carry: _ca_step(carry),
-            (grid, action, ca_params),
+            (grid, action, per_env_context, shared_context),
         )
 
-        return grid, (new_ca_params, modf_accu_time)
+        return grid, (new_per_env, modf_accu_time)

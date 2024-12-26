@@ -206,9 +206,9 @@ class PartiallyObservableForestFireJax(Operator):
         return new_rows, new_cols, burn_mask
 
     @partial(jit, static_argnums=(0,))
-    def _update_grid(self, grid, key, context):
+    def _update_grid(self, grid, key, per_env_context, shared_context):
         """Single step of grid update using JAX operations"""
-        wind_matrix = context["current_wind_matrix"]
+        wind_matrix = per_env_context["current_wind_matrix"]
         # Create masks for different cell states
         tree_mask = grid == self.tree
         fire_mask = grid == self.fire
@@ -226,10 +226,10 @@ class PartiallyObservableForestFireJax(Operator):
         # Handle direct fire spread
         key, subkey = random.split(key)
         burn_probs = self._compute_burn_probability(
-            context["vegetation"],
-            context["density"],
+            per_env_context["vegetation"],
+            per_env_context["density"],
             wind_matrix,
-            context["slope"],
+            per_env_context["slope"],
         )
 
         random_values_burn = random.uniform(key, burn_probs.shape)
@@ -250,16 +250,18 @@ class PartiallyObservableForestFireJax(Operator):
             ),
             self.fire,
             jnp.where(
-                empty_mask & (random_values_grow < context["p_tree"]),
+                empty_mask & (random_values_grow < shared_context["p_tree"]),
                 self.tree,
-                jnp.where(fire_mask & (context["fire_age"] <= 1), self.empty, grid),
+                jnp.where(
+                    fire_mask & (per_env_context["fire_age"] <= 1), self.empty, grid
+                ),
             ),
         )
 
         # Handle pinecone dispersal
         key, subkey = random.split(key)
         new_rows, new_cols, burn_mask = self._handle_pinecone_spread(
-            new_grid, subkey, context, fire_mask
+            new_grid, subkey, per_env_context, fire_mask
         )
 
         # Update grid with pinecone effects
@@ -269,36 +271,38 @@ class PartiallyObservableForestFireJax(Operator):
 
         # Update fire age
         new_fire_age = jnp.where(
-            fire_mask, context["fire_age"] - 1, context["fire_age"]
+            fire_mask, per_env_context["fire_age"] - 1, per_env_context["fire_age"]
         )
         return new_grid, new_fire_age
 
-    def update(self, grid, action, context):
-        wind_matrix, ft = context["winds"][context["wind_index"]]
+    def update(self, grid, action, per_env_context, shared_context):
+        wind_matrix, ft = shared_context["winds"][per_env_context["wind_index"]]
 
         # Create new context with selected wind matrix
-        jitted_context = {
-            **context,
+        jitted_per_env_context = {
+            **per_env_context,
             "current_wind_matrix": wind_matrix,
             "current_ft": ft,
         }
         key = random.PRNGKey(self.np_random.integers(0, 2**32))
-        new_grid, new_fire_age = self._update_grid(grid, key, jitted_context)
+        new_grid, new_fire_age = self._update_grid(
+            grid, key, jitted_per_env_context, shared_context
+        )
 
         # Handle wind changes
         key, subkey = random.split(key)
-        wind_change = random.uniform(subkey) < context["p_wind_change"]
+        wind_change = random.uniform(subkey) < shared_context["p_wind_change"]
         new_wind_index = jnp.where(
             wind_change,
-            (context["wind_index"] + random.randint(subkey, (), 1, 8))
-            % len(context["winds"]),
-            context["wind_index"],
+            (per_env_context["wind_index"] + random.randint(subkey, (), 1, 8))
+            % len(shared_context["winds"]),
+            per_env_context["wind_index"],
         )
 
-        context = dict(context)
-        context["fire_age"] = new_fire_age
-        context["wind_index"] = new_wind_index
+        per_env_context = dict(per_env_context)
+        per_env_context["fire_age"] = new_fire_age
+        per_env_context["wind_index"] = new_wind_index
         # Convert JAX array back to numpy before returning
         # new_grid = np.array(new_grid)
 
-        return new_grid, context
+        return new_grid, per_env_context, shared_context
