@@ -60,7 +60,7 @@ def generate_gif(
     duration_between: int = 50,
     save_gif: bool = True,
     num_envs: int = 8,
-    args,
+    profile: bool = False,
 ):
     paths = {}
     if save_gif and isinstance(name, str):
@@ -100,7 +100,7 @@ def generate_gif(
     make_frame = get_make_frame(env, save_gif)
     frames = []
 
-    if args.profile:
+    if profile:
         with trace("./profile"):
             run_rollout_loop(env, updates, num_envs=num_envs)
     else:
@@ -121,7 +121,11 @@ def generate_gif(
 
 
 def generate_gif_envs(
-    updates: int, duration_frame: int, save_gif: bool = True, num_envs: int = 8
+    updates: int,
+    duration_frame: int,
+    save_gif: bool = True,
+    num_envs: int = 8,
+    profile=False,
 ):
     prototypes = ["helicopter", "bulldozer", "advanced_bulldozer"]
 
@@ -137,6 +141,7 @@ def generate_gif_envs(
         duration_between=duration_frame,
         save_gif=save_gif,
         num_envs=num_envs,
+        profile=profile,
     )
 
 
@@ -180,6 +185,7 @@ parser.add_argument(
 parser.add_argument(
     "--profile",
     "-p",
+    action="store_true",
     help="Run with profiling",
 )
 
@@ -187,4 +193,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     gif.options.matplotlib["dpi"] = 200
-    generate_gif_envs(args.steps, args.duration, not args.no_gif, args.num_envs, args)
+    generate_gif_envs(
+        args.steps, args.duration, not args.no_gif, args.num_envs, args.profile
+    )
