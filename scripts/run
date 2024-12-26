@@ -12,6 +12,7 @@ from gymnasium.error import NameNotFound
 from jax.lib import xla_bridge
 from matplotlib._api.deprecation import MatplotlibDeprecationWarning
 from tqdm import tqdm
+from jax.profiler import trace
 
 import gym_cellular_automata as gymca
 from gym_cellular_automata.agents.jax_ppo import run_rollout_loop
@@ -59,6 +60,7 @@ def generate_gif(
     duration_between: int = 50,
     save_gif: bool = True,
     num_envs: int = 8,
+    args,
 ):
     paths = {}
     if save_gif and isinstance(name, str):
@@ -98,7 +100,11 @@ def generate_gif(
     make_frame = get_make_frame(env, save_gif)
     frames = []
 
-    run_rollout_loop(env, updates, num_envs=num_envs)
+    if args.profile:
+        with trace("./profile"):
+            run_rollout_loop(env, updates, num_envs=num_envs)
+    else:
+        run_rollout_loop(env, updates, num_envs=num_envs)
     # for i in tqdm(range(updates), desc="Generating frames"):
     #     if i % each == 0:
     #         frames.append(make_frame())
@@ -171,9 +177,14 @@ parser.add_argument(
     default=8,
 )
 
+parser.add_argument(
+    "--profile",
+    "-p",
+    help="Run with profiling",
+)
 
 if __name__ == "__main__":
     args = parser.parse_args()
 
     gif.options.matplotlib["dpi"] = 200
-    generate_gif_envs(args.steps, args.duration, not args.no_gif, args.num_envs)
+    generate_gif_envs(args.steps, args.duration, not args.no_gif, args.num_envs, args)
