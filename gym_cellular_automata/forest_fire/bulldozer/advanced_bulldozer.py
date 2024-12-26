@@ -1,6 +1,7 @@
 from typing import Optional, Tuple
 
 import jax.numpy as jnp
+import jax
 import numpy as np
 from jax import jit, vmap, random, lax
 from gymnasium import spaces
@@ -23,111 +24,117 @@ from .utils.render import render, plot_grid_attribute
 import math
 
 
-def init_vegetation(row_count, column_count):
-    veg_matrix = np.zeros((row_count, column_count), dtype=int)
+def init_vegetation(row_count, column_count, num_envs):
+    veg_matrix = np.zeros((num_envs, row_count, column_count), dtype=int)
 
-    # Create random patches of different vegetation types
-    num_patches = np.random.randint(4, 8)
-    for _ in range(num_patches):
-        # Random patch center and size
-        center_row = np.random.randint(0, row_count)
-        center_col = np.random.randint(0, column_count)
-        patch_height = np.random.randint(3, row_count // 2)
-        patch_width = np.random.randint(3, column_count // 2)
+    for env in range(num_envs):
+        # Create random patches of different vegetation types
+        num_patches = np.random.randint(4, 8)
+        for _ in range(num_patches):
+            # Random patch center and size
+            center_row = np.random.randint(0, row_count)
+            center_col = np.random.randint(0, column_count)
+            patch_height = np.random.randint(3, row_count // 2)
+            patch_width = np.random.randint(3, column_count // 2)
 
-        # Random vegetation type (1-3)
-        veg_type = np.random.randint(1, 6)
+            # Random vegetation type (1-3)
+            veg_type = np.random.randint(1, 6)
 
-        # Fill patch
-        row_start = max(0, center_row - patch_height // 2)
-        row_end = min(row_count, center_row + patch_height // 2)
-        col_start = max(0, center_col - patch_width // 2)
-        col_end = min(column_count, center_col + patch_width // 2)
+            # Fill patch
+            row_start = max(0, center_row - patch_height // 2)
+            row_end = min(row_count, center_row + patch_height // 2)
+            col_start = max(0, center_col - patch_width // 2)
+            col_end = min(column_count, center_col + patch_width // 2)
 
-        veg_matrix[row_start:row_end, col_start:col_end] = veg_type
+            veg_matrix[env, row_start:row_end, col_start:col_end] = veg_type
 
-    # Fill any remaining zeros randomly
-    zero_mask = veg_matrix == 0
-    veg_matrix[zero_mask] = np.random.randint(1, 4, size=np.sum(zero_mask))
+        # Fill any remaining zeros randomly
+        zero_mask = veg_matrix[env] == 0
+        veg_matrix[env][zero_mask] = np.random.randint(1, 4, size=np.sum(zero_mask))
 
     return veg_matrix
 
 
-def init_density(row_count, column_count):
-    den_matrix = np.zeros((row_count, column_count), dtype=int)
+def init_density(row_count, column_count, num_envs):
+    den_matrix = np.zeros((num_envs, row_count, column_count), dtype=int)
 
-    # Create random patches of different density types
-    num_patches = np.random.randint(4, 8)
-    for _ in range(num_patches):
-        # Random patch center and size
-        center_row = np.random.randint(0, row_count)
-        center_col = np.random.randint(0, column_count)
-        patch_height = np.random.randint(3, row_count // 2)
-        patch_width = np.random.randint(3, column_count // 2)
+    for env in range(num_envs):
+        # Create random patches of different density types
+        num_patches = np.random.randint(4, 8)
+        for _ in range(num_patches):
+            # Random patch center and size
+            center_row = np.random.randint(0, row_count)
+            center_col = np.random.randint(0, column_count)
+            patch_height = np.random.randint(3, row_count // 2)
+            patch_width = np.random.randint(3, column_count // 2)
 
-        # Random density type (1-3)
-        den_type = np.random.randint(1, 6)
+            # Random density type (1-3)
+            den_type = np.random.randint(1, 6)
 
-        # Fill patch
-        row_start = max(0, center_row - patch_height // 2)
-        row_end = min(row_count, center_row + patch_height // 2)
-        col_start = max(0, center_col - patch_width // 2)
-        col_end = min(column_count, center_col + patch_width // 2)
+            # Fill patch
+            row_start = max(0, center_row - patch_height // 2)
+            row_end = min(row_count, center_row + patch_height // 2)
+            col_start = max(0, center_col - patch_width // 2)
+            col_end = min(column_count, center_col + patch_width // 2)
 
-        den_matrix[row_start:row_end, col_start:col_end] = den_type
+            den_matrix[env, row_start:row_end, col_start:col_end] = den_type
 
-    # Fill any remaining zeros randomly
-    zero_mask = den_matrix == 0
-    den_matrix[zero_mask] = np.random.randint(1, 4, size=np.sum(zero_mask))
+        # Fill any remaining zeros randomly
+        zero_mask = den_matrix[env] == 0
+        den_matrix[env][zero_mask] = np.random.randint(1, 4, size=np.sum(zero_mask))
 
     return den_matrix
 
 
-def init_altitude(row_count, column_count):
-    return np.tile(np.arange(column_count), (row_count, 1))
+def init_altitude(row_count, column_count, num_envs):
+    base = np.tile(np.arange(column_count), (row_count, 1))
+    return np.tile(base, (num_envs, 1, 1))
 
 
-def init_altitude_2(row_count, column_count):
-    # Start with a base of random noise
-    altitude = np.random.uniform(0, 5, (row_count, column_count))
+def init_altitude_2(row_count, column_count, num_envs):
+    altitude = np.zeros((num_envs, row_count, column_count))
 
-    # Add more small hills
-    num_hills = np.random.randint(6, 10)  # More hills
-    for _ in range(num_hills):
-        # Random hill center and size
-        center_row = np.random.randint(0, row_count)
-        center_col = np.random.randint(0, column_count)
-        radius = np.random.randint(
-            2, min(row_count, column_count) // 4
-        )  # Smaller radius
-        height = np.random.uniform(2, 6)  # Lower heights for smaller hills
+    for env in range(num_envs):
+        # Start with a base of random noise
+        altitude[env] = np.random.uniform(0, 5, (row_count, column_count))
 
-        # Create hill using distance from center
-        for i in range(row_count):
-            for j in range(column_count):
-                distance = np.sqrt((i - center_row) ** 2 + (j - center_col) ** 2)
-                if distance < radius:
-                    # Smooth hill falloff using cosine
-                    factor = np.cos(distance / radius * np.pi / 2)
-                    altitude[i, j] += height * factor
+        # Add more small hills
+        num_hills = np.random.randint(6, 10)  # More hills
+        for _ in range(num_hills):
+            # Random hill center and size
+            center_row = np.random.randint(0, row_count)
+            center_col = np.random.randint(0, column_count)
+            radius = np.random.randint(
+                2, min(row_count, column_count) // 4
+            )  # Smaller radius
+            height = np.random.uniform(2, 6)  # Lower heights for smaller hills
 
-    # Add some gentle slopes between flat areas
-    num_slopes = np.random.randint(4, 8)  # More slopes
-    for _ in range(num_slopes):
-        # Random rectangular area - smaller areas
-        start_row = np.random.randint(0, row_count - 4)
-        start_col = np.random.randint(0, column_count - 4)
-        width = np.random.randint(3, column_count // 4)  # Smaller width
-        height = np.random.randint(3, row_count // 4)  # Smaller height
+            # Create hill using distance from center
+            for i in range(row_count):
+                for j in range(column_count):
+                    distance = np.sqrt((i - center_row) ** 2 + (j - center_col) ** 2)
+                    if distance < radius:
+                        # Smooth hill falloff using cosine
+                        factor = np.cos(distance / radius * np.pi / 2)
+                        altitude[env, i, j] += height * factor
 
-        # Small height difference for gentle slope
-        height_diff = np.random.uniform(1, 4)  # Smaller height differences
+        # Add some gentle slopes between flat areas
+        num_slopes = np.random.randint(4, 8)  # More slopes
+        for _ in range(num_slopes):
+            # Random rectangular area - smaller areas
+            start_row = np.random.randint(0, row_count - 4)
+            start_col = np.random.randint(0, column_count - 4)
+            width = np.random.randint(3, column_count // 4)  # Smaller width
+            height = np.random.randint(3, row_count // 4)  # Smaller height
 
-        # Add gradual slope
-        for i in range(start_row, min(start_row + height, row_count)):
-            for j in range(start_col, min(start_col + width, column_count)):
-                progress = (i - start_row) / height
-                altitude[i, j] += height_diff * progress
+            # Small height difference for gentle slope
+            height_diff = np.random.uniform(1, 4)  # Smaller height differences
+
+            # Add gradual slope
+            for i in range(start_row, min(start_row + height, row_count)):
+                for j in range(start_col, min(start_col + width, column_count)):
+                    progress = (i - start_row) / height
+                    altitude[env, i, j] += height_diff * progress
 
     return altitude / 10
 
@@ -136,32 +143,31 @@ def tg(x):
     return math.degrees(math.atan(x))
 
 
-def get_slope(altitude, row_count, column_count):
-    # Convert to numpy array if not already
-
+def get_slope(altitude, row_count, column_count, num_envs):
     # Initialize slope matrix with 3x3 sub-matrices of zeros
-    slope_matrix = np.zeros((row_count, column_count, 3, 3))
+    slope_matrix = np.zeros((num_envs, row_count, column_count, 3, 3))
 
-    # Skip edges since they remain flat (all zeros)
-    for row in range(1, row_count - 1):
-        for col in range(1, column_count - 1):
-            # Get 3x3 neighborhood of altitudes
-            neighborhood = altitude[row - 1 : row + 2, col - 1 : col + 2]
-            current = altitude[row, col]
+    for env in range(num_envs):
+        # Skip edges since they remain flat (all zeros)
+        for row in range(1, row_count - 1):
+            for col in range(1, column_count - 1):
+                # Get 3x3 neighborhood of altitudes
+                neighborhood = altitude[env, row - 1 : row + 2, col - 1 : col + 2]
+                current = altitude[env, row, col]
 
-            # Calculate slopes
-            diffs = current - neighborhood
+                # Calculate slopes
+                diffs = current - neighborhood
 
-            # Apply diagonal scaling
-            diagonals = [(0, 0), (0, 2), (2, 0), (2, 2)]
-            for i, j in diagonals:
-                diffs[i, j] /= 1.414
+                # Apply diagonal scaling
+                diagonals = [(0, 0), (0, 2), (2, 0), (2, 2)]
+                for i, j in diagonals:
+                    diffs[i, j] /= 1.414
 
-            # Convert to angles
-            slope_matrix[row, col] = np.degrees(np.arctan(diffs))
+                # Convert to angles
+                slope_matrix[env, row, col] = np.degrees(np.arctan(diffs))
 
-            # Center point is always 0
-            slope_matrix[row, col, 1, 1] = 0
+                # Center point is always 0
+                slope_matrix[env, row, col, 1, 1] = 0
 
     # Bin slope values into 10 ranges and count cells in each bin
     slope_flat = slope_matrix.flatten()
@@ -238,6 +244,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         self,
         nrows,
         ncols,
+        num_envs=8,
         speed_move=0.12,
         speed_act=0.03,
         pos_bull: Optional[Tuple] = None,
@@ -251,6 +258,23 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
     ):
         super().__init__(nrows, ncols, **kwargs)
 
+        self.shared_context_keys = {
+            "winds",  # Shared wind patterns
+            "p_fire",  # Global probability parameters
+            "p_tree",
+            "p_wind_change",
+        }
+
+        self.per_env_context_keys = {
+            "wind_index",  # Current wind index for each env
+            "density",  # Per-environment terrain features
+            "vegetation",
+            "altitude",
+            "slope",
+            "fire_age",  # Per-environment state
+        }
+
+        self.num_envs = num_envs
         self.title = "ForestFireBulldozer" + str(nrows) + "x" + str(ncols)
 
         # Env Representation Parameters
@@ -280,7 +304,9 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         self._pos_bull = (
             pos_bull  # Initial position of bulldozer, default at `initial_context`
         )
-        self._pos_fire = pos_fire  # Initial position of fire, default at `initial_fire`
+        self._pos_fire = (
+            [pos_fire] * num_envs if pos_fire is not None else None
+        )  # Initial position of fire for each env, default at `initial_fire`
 
         self._p_tree_init = p_tree  # Initial Tree probability
         self._p_empty_init = p_empty  # Initial Empty probality
@@ -289,12 +315,12 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
 
         winds = get_winds()  # Get numpy array
 
-        density = init_density(nrows, ncols)  # Get numpy array
+        density = init_density(nrows, ncols, num_envs)  # Get numpy array
 
-        vegetation = init_vegetation(nrows, ncols)  # Get numpy array
+        vegetation = init_vegetation(nrows, ncols, num_envs)  # Get numpy array
 
-        altitude = init_altitude_2(nrows, ncols)  # Get numpy array
-        slope = get_slope(altitude, nrows, ncols)  # Get numpy array
+        altitude = init_altitude_2(nrows, ncols, num_envs)  # Get numpy array
+        slope = get_slope(altitude, nrows, ncols, num_envs)  # Get numpy array
 
         self._winds = jnp.array(winds)  # Convert to JAX array
         self._wind = self._winds[0]
@@ -303,7 +329,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         self._altitude = jnp.array(altitude)  # Convert to JAX array
         self._slope = jnp.array(slope)  # Convert to JAX array
 
-        self._fire_age = jnp.zeros((nrows, ncols))
+        self._fire_age = jnp.zeros((num_envs, nrows, ncols))
         self._p_fire = 0.00033
         self._p_tree = 0.00333
         self._p_wind_change = 0.03
@@ -387,29 +413,45 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
 
     def stateless_step(self, action, obs, info):
         # MDP Transition
-        grid, context = obs
-        next_grid, next_context = self.MDP(grid, action, context)
+        grid, (ca_params, position, time) = obs
+
+        shared_context = {k: ca_params[k] for k in self.shared_context_keys}
+        per_env_context = {k: ca_params[k] for k in self.per_env_context_keys}
+        per_env_in_axes = {k: 0 for k in self.per_env_context_keys}
+        next_grid, next_per_env_context = jax.vmap(
+            self.MDP,
+            in_axes=(
+                0,
+                0,
+                per_env_in_axes,
+                None,
+                0,
+                0,
+            ),  # grid, action, per_env_context, shared_context
+        )(grid, action, per_env_context, shared_context, position, time)
+        per_env_portion, next_position, next_time = next_per_env_context
+        next_context = {**shared_context, **per_env_portion}, next_position, next_time
         next_state = (next_grid, next_context)
 
         # Check for termination
-        next_done = self._is_done()
+        next_done = jax.vmap(self._is_done, in_axes=0)(next_grid)
 
         # Gym API Formatting
         obs = next_state
-        reward = self._award()
+        reward = jax.vmap(self._award, in_axes=0)(next_grid)
         terminated = next_done
-        truncated = False
-        info["reward"] = jnp.array([reward])
-        info["terminated"] = jnp.array([terminated])
-        info["TimeLimit.truncated"] = jnp.array([truncated])
+        truncated = jnp.full(grid.shape[0], False)
+        info["reward"] = reward
+        info["terminated"] = terminated
+        info["TimeLimit.truncated"] = truncated
 
         info["steps_elapsed"] = info["steps_elapsed"] + jnp.ones(1)
-        info["reward_accumulated"] = info["reward_accumulated"] + jnp.array([reward])
+        info["reward_accumulated"] = info["reward_accumulated"] + jnp.array(reward)
 
         return (
             obs,
             reward,
-            jnp.array([terminated]),
+            terminated,
             truncated,
             info,
         )
@@ -426,7 +468,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
     def vegitation_render(self):
         return plot_grid_attribute(self._vegitation, "Vegitation")
 
-    def _award(self):
+    def _award(self, grid):
         """Reward Function
 
         Negative Ratio of Burning Area per Total Flammable Area
@@ -456,14 +498,14 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         The sparse reward is alive trees at epidose's end:
         t / (e + t + f)
         """
-        counts = self.count_cells(self.grid)
+        counts = self.count_cells(grid)
 
         t = counts[self._tree]
         f = counts[self._fire]
         return -(f / (t + f))
 
-    def _is_done(self):
-        return jnp.invert(jnp.any(self.grid == self._fire))
+    def _is_done(self, grid):
+        return jnp.invert(jnp.any(grid == self._fire))
 
     def _report(self):
         return {"hit": self.modify.hit}
@@ -485,42 +527,48 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         grid_space = GridSpace(
             values = [  self._empty,   self._tree,   self._fire],
             probs  = [self._p_empty_init, self._p_tree_init,          0.0],
-            shape=(self.nrows, self.ncols),
+            shape=(self.num_envs, self.nrows, self.ncols),
         )
         # fmt: on
 
-        grid = grid_space.sample()
+        grid = jnp.array(grid_space.sample())
 
         # Fire Position
-        # Around the lower left quadrant
+        # Around the lower left quadrant for each env
         if self._pos_fire is None:
-            r, c = (3 * self.nrows // 4), (1 * self.ncols // 4)
-            self._pos_fire = r + self._noise(self.nrows), c + self._noise(self.ncols)
+            self._pos_fire = []
+            for _ in range(self.num_envs):
+                r = (3 * self.nrows // 4) + self._noise(self.nrows)
+                c = (1 * self.ncols // 4) + self._noise(self.ncols)
+                self._pos_fire.append((r, c))
 
-        r, c = self._pos_fire
-        grid[r, c] = self._fire
-        self._fire_age = self._fire_age.at[r, c].set(10)
+        for env in range(self.num_envs):
+            r, c = self._pos_fire[env]
+            grid = grid.at[env, r, c].set(self._fire)
+            self._fire_age = self._fire_age.at[env, r, c].set(10)
 
         return jnp.array(grid, dtype=jnp.int32)
 
     def _initial_context_distribution(self):
-        init_time = jnp.array(0.0)
+        init_time = jnp.zeros(self.num_envs)
 
         if self._pos_bull is None:
-            # Bulldozer Position
+            # Bulldozer Position for each env
             # Around the upper right quadrant
-            r, c = (1 * self.nrows // 4), (3 * self.ncols // 4)
+            self._pos_bull = []
+            for _ in range(self.num_envs):
+                r, c = (1 * self.nrows // 4), (3 * self.ncols // 4)
 
-            r = r + self._noise(self.nrows)
-            c = c + self._noise(self.ncols)
+                r = r + self._noise(self.nrows)
+                c = c + self._noise(self.ncols)
 
-            self._pos_bull = r, c
+                self._pos_bull.append((r, c))
 
         init_position = jnp.array(self._pos_bull)
         init_context = (
             {
                 "winds": self._winds,
-                "wind_index": 0,
+                "wind_index": jnp.zeros(self.num_envs, dtype=jnp.int32),
                 "density": self._density,
                 "vegetation": self._vegitation,
                 "altitude": self._altitude,
@@ -531,7 +579,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
                 "fire_age": self._fire_age,
             },
             init_position,
-            jnp.array([init_time], dtype=jnp.float32),
+            init_time,
         )
 
         return init_context
@@ -591,12 +639,16 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
 
     def _set_spaces(self):
         self.grid_space = GridSpace(
-            values=[self._empty, self._tree, self._fire], shape=(self.nrows, self.ncols)
+            values=[self._empty, self._tree, self._fire],
+            shape=(self.num_envs, self.nrows, self.ncols),
         )
 
         self.ca_params_space = spaces.Box(0.0, 1.0, shape=(3, 3), dtype=TYPE_BOX)
-        self.position_space = spaces.MultiDiscrete(
-            [self.nrows, self.ncols], dtype=TYPE_INT
+        self.position_space = spaces.Box(
+            low=np.zeros((self.num_envs, 2), dtype=TYPE_INT),
+            high=np.tile(np.array([self.nrows, self.ncols]), (self.num_envs, 1)),
+            shape=(self.num_envs, 2),
+            dtype=TYPE_INT,
         )
         self.time_space = spaces.Box(0.0, float("inf"), shape=tuple(), dtype=TYPE_BOX)
 
@@ -611,7 +663,10 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         # RL spaces
 
         m, n = len(self._moves), len(self._shoots)
-        self.action_space = spaces.MultiDiscrete([m, n], dtype=TYPE_INT)
+        self.action_space = spaces.MultiDiscrete(
+            nvec=np.array([[m, n]] * self.num_envs),  # Shape becomes (num_envs, 2)
+            dtype=TYPE_INT,
+        )
         self.observation_space = spaces.Tuple((self.grid_space, self.context_space))
 
         # Suboperators Spaces
@@ -682,13 +737,14 @@ class MDP(Operator):
 
         self.suboperators = self.repeat_ca, self.move_modify
 
-    def update(self, grid, action, context):
-
-        amove, ashoot = action
-        ca_params, position, time = context
+    def update(self, grid, action, per_env_context, shared_context, position, time):
+        # Combine per-environment and shared context parameters
+        ca_params = {**per_env_context, **shared_context}
 
         grid, (ca_params, time) = self.repeat_ca(grid, action, (ca_params, time))
 
         grid, position = self.move_modify(grid, action, position)
+        # Only return the per-env components that were updated
+        next_per_env_context = {k: ca_params[k] for k in per_env_context.keys()}
 
-        return grid, (ca_params, position, time)
+        return grid, (next_per_env_context, position, time)

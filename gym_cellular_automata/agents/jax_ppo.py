@@ -92,11 +92,17 @@ class Args:
 
 
 class Network(nn.Module):
+    log_grid_shapes: bool = False
+
     @nn.compact
     def __call__(self, grid, position):
-        # grid = jnp.transpose(grid, (0, 2, 3, 1))
-        # Add a dimension of ones to the grid
+        if self.log_grid_shapes:
+            print(f"Initial grid shape: {grid.shape}")
+            print(f"Initial position shape: {position.shape}")
+
         grid = grid[..., None]
+        if self.log_grid_shapes:
+            print(f"Grid shape after adding channel dim: {grid.shape}")
 
         grid = nn.Conv(
             32,
@@ -106,6 +112,8 @@ class Network(nn.Module):
             kernel_init=orthogonal(np.sqrt(2)),
             bias_init=constant(0.0),
         )(grid)
+        if self.log_grid_shapes:
+            print(f"Grid shape after first conv: {grid.shape}")
 
         grid = nn.relu(grid)
         grid = nn.Conv(
@@ -116,6 +124,9 @@ class Network(nn.Module):
             kernel_init=orthogonal(np.sqrt(2)),
             bias_init=constant(0.0),
         )(grid)
+        if self.log_grid_shapes:
+            print(f"Grid shape after second conv: {grid.shape}")
+
         grid = nn.relu(grid)
         grid = nn.Conv(
             64,
@@ -125,24 +136,41 @@ class Network(nn.Module):
             kernel_init=orthogonal(np.sqrt(2)),
             bias_init=constant(0.0),
         )(grid)
+        if self.log_grid_shapes:
+            print(f"Grid shape after third conv: {grid.shape}")
 
         grid = nn.relu(grid)
 
-        grid_features = grid.reshape((grid.shape[0], -1))
-        grid_features = nn.Dense(256)(grid_features)  # Reduce to more manageable size
+        grid_features = grid.reshape(grid.shape[0], -1)
+        if self.log_grid_shapes:
+            print(f"Grid features shape after flatten: {grid_features.shape}")
+
+        grid_features = nn.Dense(256)(grid_features)
+        if self.log_grid_shapes:
+            print(f"Grid features shape after dense: {grid_features.shape}")
+
         grid_features = nn.relu(grid_features)
 
         # Process position input
         position_features = nn.Dense(
             256, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0)
         )(position)
+        if self.log_grid_shapes:
+            print(f"Position features shape after dense: {position_features.shape}")
+
         position_features = nn.relu(position_features)
 
         # Combine features
         combined = jnp.concatenate([grid_features, position_features], axis=-1)
+        if self.log_grid_shapes:
+            print(f"Combined features shape: {combined.shape}")
+
         x = nn.Dense(512, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
             combined
         )
+        if self.log_grid_shapes:
+            print(f"Final features shape: {x.shape}")
+
         x = nn.relu(x)
         return x
 
@@ -166,6 +194,7 @@ class Actor(nn.Module):
 
         # Multiple heads for each action dimension
         logits = []
+
         for dim in self.action_dims:
             head = nn.Dense(dim)(features)
             logits.append(head)
@@ -201,9 +230,9 @@ class EpisodeStatistics:
     returned_episode_lengths: jnp.array
 
 
-def run_rollout_loop(env, num_iterations):
+def run_rollout_loop(env, num_iterations, num_envs=8):
     args = Args()
-    args.batch_size = int(args.num_envs * args.num_steps)
+    args.batch_size = int(num_envs * args.num_steps)
     args.minibatch_size = int(args.batch_size // args.num_minibatches)
     args.num_iterations = args.total_timesteps // args.batch_size
     run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
@@ -236,20 +265,20 @@ def run_rollout_loop(env, num_iterations):
     # envs = envpool.make(
     #     args.env_id,
     #     env_type="gym",
-    #     num_envs=args.num_envs,
+    #     num_envs=num_envs,
     #     episodic_life=True,
     #     reward_clip=True,
     #     seed=args.seed,
     # )
-    # envs.num_envs = args.num_envs
+    # envs.num_envs = num_envs
     # envs.action_space = envs.action_space
     # envs.observation_space = envs.observation_space
     # envs.is_vector_env = True
     episode_stats = EpisodeStatistics(
-        episode_returns=jnp.zeros(args.num_envs, dtype=jnp.float32),
-        episode_lengths=jnp.zeros(args.num_envs, dtype=jnp.int32),
-        returned_episode_returns=jnp.zeros(args.num_envs, dtype=jnp.float32),
-        returned_episode_lengths=jnp.zeros(args.num_envs, dtype=jnp.int32),
+        episode_returns=jnp.zeros(num_envs, dtype=jnp.float32),
+        episode_lengths=jnp.zeros(num_envs, dtype=jnp.int32),
+        returned_episode_returns=jnp.zeros(num_envs, dtype=jnp.float32),
+        returned_episode_lengths=jnp.zeros(num_envs, dtype=jnp.int32),
     )
     # handle, recv, send, step_env = envs.xla()
 
@@ -304,20 +333,18 @@ def run_rollout_loop(env, num_iterations):
         return args.learning_rate * frac
 
     network = Network()
-    actor = Actor(action_dims=env.action_space.nvec)
+    actor = Actor(action_dims=env.action_space.nvec[0])
     critic = Critic()
 
     grid_sample, (ca_params, position, t) = env.observation_space.sample()
-    network_params = network.init(
-        network_key, np.array([grid_sample]), np.array([position])
-    )
+    network_params = network.init(network_key, grid_sample, jnp.array(position))
     grid_sample, (ca_params, position, t) = env.observation_space.sample()
     actor_params = actor.init(
         actor_key,
         network.apply(
             network_params,
-            np.array([grid_sample]),
-            np.array([position]),
+            grid_sample,
+            jnp.array(position),
         ),
     )
     grid_sample, (ca_params, position, t) = env.observation_space.sample()
@@ -325,8 +352,8 @@ def run_rollout_loop(env, num_iterations):
         critic_key,
         network.apply(
             network_params,
-            np.array([grid_sample]),
-            np.array([position]),
+            grid_sample,
+            jnp.array(position),
         ),
     )
 
@@ -354,18 +381,18 @@ def run_rollout_loop(env, num_iterations):
     # ALGO Logic: Storage setup
     grid, (ca_params, position, t) = env.observation_space
     storage = Storage(
-        grid_obs=jnp.zeros((args.num_steps, args.num_envs) + grid.shape),
-        position_obs=jnp.zeros((args.num_steps, args.num_envs) + position.shape),
+        grid_obs=jnp.zeros((args.num_steps,) + grid.shape),
+        position_obs=jnp.zeros((args.num_steps,) + position.shape),
         actions=jnp.zeros(
-            (args.num_steps, args.num_envs) + env.action_space.shape + (2,),
+            (args.num_steps,) + env.action_space.shape,
             dtype=jnp.int32,
         ),
-        logprobs=jnp.zeros((args.num_steps, args.num_envs, 2)),
-        dones=jnp.zeros((args.num_steps, args.num_envs)),
-        values=jnp.zeros((args.num_steps, args.num_envs)),
-        advantages=jnp.zeros((args.num_steps, args.num_envs)),
-        returns=jnp.zeros((args.num_steps, args.num_envs)),
-        rewards=jnp.zeros((args.num_steps, args.num_envs)),
+        logprobs=jnp.zeros(((args.num_steps,) + env.action_space.shape)),
+        dones=jnp.zeros((args.num_steps, num_envs)),
+        values=jnp.zeros((args.num_steps, num_envs)),
+        advantages=jnp.zeros((args.num_steps, num_envs)),
+        returns=jnp.zeros((args.num_steps, num_envs)),
+        rewards=jnp.zeros((args.num_steps, num_envs)),
     )
 
     @jax.jit
@@ -381,8 +408,8 @@ def run_rollout_loop(env, num_iterations):
         next_grid_obs, (ca_params, next_position_obs, t) = next_obs
         hidden = network.apply(
             agent_state.params["network_params"],
-            next_grid_obs[None, ...],
-            next_position_obs[None, ...],
+            next_grid_obs,
+            next_position_obs,
         )
         logits_set = actor.apply(agent_state.params["actor_params"], hidden)
 
@@ -398,6 +425,7 @@ def run_rollout_loop(env, num_iterations):
             logprobs.append(logprob)
             actions.append(action)
         logprobs = jnp.stack(logprobs, axis=-1)
+        actions = jnp.stack(actions, axis=-1)
 
         value = critic.apply(agent_state.params["critic_params"], hidden)
         storage = storage.replace(
@@ -423,10 +451,12 @@ def run_rollout_loop(env, num_iterations):
         # normalize the logits https://gregorygundersen.com/blog/2020/02/09/log-sum-exp/
         entropies = []
         logprobs = []
-        for i, l in enumerate(logits_set):
-            logprob = jax.nn.log_softmax(l)[jnp.arange(action.shape[0]), action[:, i]]
+        for i, logit in enumerate(logits_set):
+            logprob = jax.nn.log_softmax(logit)[
+                jnp.arange(action.shape[0]), action[:, i]
+            ]
             logprobs.append(logprob)
-            logits = l - jax.scipy.special.logsumexp(l, axis=-1, keepdims=True)
+            logits = logit - jax.scipy.special.logsumexp(logit, axis=-1, keepdims=True)
             logits = logits.clip(min=jnp.finfo(logits.dtype).min)
             p_log_p = logits * jax.nn.softmax(logits)
             entropy = -p_log_p.sum(-1)
@@ -448,8 +478,8 @@ def run_rollout_loop(env, num_iterations):
             agent_state.params["critic_params"],
             network.apply(
                 agent_state.params["network_params"],
-                grid[None, ...],
-                position[None, ...],
+                grid,
+                position,
             ),
         ).squeeze()
         lastgaelam = 0
@@ -480,12 +510,14 @@ def run_rollout_loop(env, num_iterations):
         storage: Storage,
         key: jax.random.PRNGKey,
     ):
-        b_grid_obs = storage.grid_obs.reshape((-1,) + env.observation_space[0].shape)
-        b_position_obs = storage.position_obs.reshape(
-            (-1,) + env.observation_space[1][1].shape
+        b_grid_obs = storage.grid_obs.reshape(
+            (-1,) + env.observation_space[0].shape[1:]
         )
-        b_logprobs = storage.logprobs.reshape((-1,) + env.action_space.shape)
-        b_actions = storage.actions.reshape((-1,) + env.action_space.shape)
+        b_position_obs = storage.position_obs.reshape(
+            (-1,) + env.observation_space[1][1].shape[1:]
+        )
+        b_logprobs = storage.logprobs.reshape((-1,) + (env.action_space.shape[-1],))
+        b_actions = storage.actions.reshape((-1,) + (env.action_space.shape[-1],))
         b_advantages = storage.advantages.reshape(-1)
         b_returns = storage.returns.reshape(-1)
 
@@ -500,7 +532,7 @@ def run_rollout_loop(env, num_iterations):
                     mb_advantages.std() + 1e-8
                 )
 
-            mb_advantages = mb_advantages[:, None]
+            mb_advantages = mb_advantages[:, None, None]
 
             # Policy loss
             pg_loss1 = -mb_advantages * ratio
@@ -548,13 +580,13 @@ def run_rollout_loop(env, num_iterations):
     global_step = 0
     start_time = time.time()
     next_obs, report = env.reset()
-    next_done = jnp.full(args.num_envs, False)
+    next_done = jnp.full(num_envs, False)
     next_info = {
-        "TimeLimit.truncated": jnp.full(args.num_envs, False),
-        "terminated": jnp.full(args.num_envs, False),
-        "steps_elapsed": jnp.zeros(args.num_envs),
-        "reward_accumulated": jnp.zeros(args.num_envs),
-        "reward": jnp.zeros(args.num_envs),
+        "TimeLimit.truncated": jnp.full(num_envs, False),
+        "terminated": jnp.full(num_envs, False),
+        "steps_elapsed": jnp.zeros(num_envs),
+        "reward_accumulated": jnp.zeros(num_envs),
+        "reward": jnp.zeros(num_envs),
     }
 
     @jax.jit
@@ -569,6 +601,7 @@ def run_rollout_loop(env, num_iterations):
         global_step,
     ):
         # Remove @jax.jit and use jax.lax.fori_loop instead
+
         def body_fun(step, carry):
             (
                 agent_state,
@@ -581,7 +614,7 @@ def run_rollout_loop(env, num_iterations):
                 global_step,
             ) = carry
 
-            global_step += args.num_envs
+            global_step += num_envs
             storage, action, key = get_action_and_value(
                 agent_state, next_obs, next_done, storage, step, key
             )
@@ -644,7 +677,10 @@ def run_rollout_loop(env, num_iterations):
         avg_episodic_return = np.mean(
             jax.device_get(episode_stats.returned_episode_returns)
         )
-        print(f"global_step={global_step}, avg_episodic_return={avg_episodic_return}")
+        current_episodic_return = np.mean(jax.device_get(episode_stats.episode_returns))
+        print(
+            f"global_step={global_step}, avg_episodic_return={avg_episodic_return}, current_episodic_return={current_episodic_return}"
+        )
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
         writer.add_scalar(
@@ -671,7 +707,7 @@ def run_rollout_loop(env, num_iterations):
         )
         writer.add_scalar(
             "charts/SPS_update",
-            int(args.num_envs * args.num_steps / (time.time() - iteration_time_start)),
+            int(num_envs * args.num_steps / (time.time() - iteration_time_start)),
             global_step,
         )
 
