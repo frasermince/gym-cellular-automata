@@ -126,13 +126,14 @@ def generate_gif_envs(
     save_gif: bool = True,
     num_envs: int = 8,
     profile=False,
+    size=256,
 ):
     prototypes = ["helicopter", "bulldozer", "advanced_bulldozer"]
 
     proto_id = 2
     name = prototypes[proto_id]
     ProtoEnv = gymca.prototypes[proto_id]
-    env = ProtoEnv(nrows=256, ncols=256, num_envs=num_envs)
+    env = ProtoEnv(nrows=size, ncols=size, num_envs=num_envs)
 
     generate_gif(
         env,
@@ -189,10 +190,22 @@ parser.add_argument(
     help="Run with profiling",
 )
 
+parser.add_argument(
+    "--size",
+    "-z",
+    type=int,
+    default=256,
+)
+
 if __name__ == "__main__":
     args = parser.parse_args()
 
     gif.options.matplotlib["dpi"] = 200
     generate_gif_envs(
-        args.steps, args.duration, not args.no_gif, args.num_envs, args.profile
+        args.steps,
+        args.duration,
+        not args.no_gif,
+        args.num_envs,
+        args.profile,
+        args.size,
     )
