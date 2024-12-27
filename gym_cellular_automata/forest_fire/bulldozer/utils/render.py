@@ -120,7 +120,7 @@ def plot_grid_attribute(grid, attribute_name):
     return main()
 
 
-def render(env):
+def render(env, grid, time, pos, wind_index=None):
     NROWS = env.nrows
     NCOLS = env.ncols
 
@@ -132,9 +132,6 @@ def render(env):
     COLORS = [COLOR_EMPTY, COLOR_TREE, COLOR_FIRE]
     CELLS = [EMPTY, TREE, FIRE]
     NORM, CMAP = get_norm_cmap(CELLS, COLORS)
-
-    grid = env.grid
-    ca_params, pos, time = env.context
 
     local_grid = moore_n(N_LOCAL, pos, grid, EMPTY)
     pos_fseed = env._pos_fire
@@ -268,12 +265,12 @@ def render(env):
         ax.bar(height=lv3y, color=lv3c, bottom=lv3b, **commons)
 
         # Add wind direction arrow and symbol
-        if "wind_index" in ca_params:
+        if wind_index is not None:
             arrow_x = 1.8
             arrow_y = counts_total * 0.2
 
             # Convert wind index to angle (0=North, clockwise)
-            angle = (-45 * ca_params["wind_index"]) + 90
+            angle = (-45 * wind_index) + 90
 
             ax.set_xlim([0, 3])  # Adjust based on your desired range
             ax.set_ylim([0, counts_total])

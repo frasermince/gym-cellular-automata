@@ -6,6 +6,7 @@ from typing import Union
 
 import gif
 import jax
+import jax.numpy as jnp
 import moviepy as mp
 from gymnasium import Env, make
 from gymnasium.error import NameNotFound
@@ -36,23 +37,22 @@ jax.config.update("jax_platform_name", DEFAULT_PLATFORM)
 
 
 def get_make_frame(env: Env, save_gif: bool):
-    env.reset()
 
     warnings.filterwarnings("ignore", category=MatplotlibDeprecationWarning)
 
-    @gif.frame
-    def make_frame():
-        if save_gif:
-            env.render()
-        step_tuple = env.step(env.action_space.sample())
-
-        if step_tuple[2]:  # if done
-            env.reset()
+    # @gif.frame
+    def make_frame(obs, info):
+        # if save_gif:
+        #     env.render()
+        action = env.action_space.sample()
+        step_tuple = env.stateless_step(action, obs, info)
+        step_tuple = env.conditional_reset(step_tuple)
+        return step_tuple
 
     return make_frame
 
 
-def generate_gif(
+def generate_frames(
     env: Env,
     name: Union[str, Path],
     each: int = 1,
@@ -61,6 +61,7 @@ def generate_gif(
     save_gif: bool = True,
     num_envs: int = 8,
     profile: bool = False,
+    no_train: bool = False,
 ):
     paths = {}
     if save_gif and isinstance(name, str):
@@ -99,12 +100,34 @@ def generate_gif(
 
     make_frame = get_make_frame(env, save_gif)
     frames = []
+    next_obs, report = env.reset()
+    next_info = {
+        "TimeLimit.truncated": jnp.full(num_envs, False),
+        "terminated": jnp.full(num_envs, False),
+        "steps_elapsed": jnp.zeros(num_envs),
+        "reward_accumulated": jnp.zeros(num_envs),
+        "reward": jnp.zeros(num_envs),
+    }
 
-    if profile:
-        with trace("./profile"):
-            run_rollout_loop(env, updates, num_envs=num_envs)
+    if no_train:
+        for i in tqdm(range(updates), desc="Generating frames"):
+            if i % each == 0:
+                (
+                    next_obs,
+                    reward,
+                    next_done,
+                    truncated,
+                    next_info,
+                ) = make_frame(next_obs, next_info)
+                frames.append(
+                    (next_obs[0], next_obs[1]["per_env_context"]["wind_index"])
+                )
     else:
-        run_rollout_loop(env, updates, num_envs=num_envs)
+        if profile:
+            with trace("./profile"):
+                run_rollout_loop(env, updates, num_envs=num_envs)
+        else:
+            run_rollout_loop(env, updates, num_envs=num_envs)
     # for i in tqdm(range(updates), desc="Generating frames"):
     #     if i % each == 0:
     #         frames.append(make_frame())
@@ -127,6 +150,7 @@ def generate_gif_envs(
     num_envs: int = 8,
     profile=False,
     size=256,
+    no_train=False,
 ):
     prototypes = ["helicopter", "bulldozer", "advanced_bulldozer"]
 
@@ -135,7 +159,7 @@ def generate_gif_envs(
     ProtoEnv = gymca.prototypes[proto_id]
     env = ProtoEnv(nrows=size, ncols=size, num_envs=num_envs)
 
-    generate_gif(
+    generate_frames(
         env,
         name,
         updates=updates,
@@ -143,6 +167,7 @@ def generate_gif_envs(
         save_gif=save_gif,
         num_envs=num_envs,
         profile=profile,
+        no_train=no_train,
     )
 
 
@@ -191,6 +216,13 @@ parser.add_argument(
 )
 
 parser.add_argument(
+    "--no-train",
+    "-t",
+    action="store_true",
+    help="Run without training",
+)
+
+parser.add_argument(
     "--size",
     "-z",
     type=int,
@@ -208,4 +240,5 @@ if __name__ == "__main__":
         args.num_envs,
         args.profile,
         args.size,
+        args.no_train,
     )

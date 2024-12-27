@@ -283,13 +283,16 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
     # handle, recv, send, step_env = envs.xla()
 
     def step_env_wrapped(episode_stats, action, obs, info):
+        step_tuple = env.stateless_step(action, obs, info)
+
+        step_tuple = env.conditional_reset(step_tuple)
         (
             next_obs,
             reward,
             next_done,
             truncated,
             next_info,
-        ) = env.stateless_step(action, obs, info)
+        ) = step_tuple
         new_episode_return = episode_stats.episode_returns + info["reward"]
         new_episode_length = episode_stats.episode_lengths + 1
         episode_stats = episode_stats.replace(

@@ -22,6 +22,7 @@ from gym_cellular_automata.operator import Operator
 from .utils.render import render, plot_grid_attribute
 
 import math
+from functools import partial
 
 
 def init_vegetation(row_count, column_count, num_envs):
@@ -266,12 +267,12 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         }
 
         self.per_env_context_keys = {
-            "wind_index",  # Current wind index for each env
-            "density",  # Per-environment terrain features
+            "wind_index",
+            "density",
             "vegetation",
             "altitude",
             "slope",
-            "fire_age",  # Per-environment state
+            "fire_age",
         }
 
         self.num_envs = num_envs
@@ -464,6 +465,44 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             terminated,
             truncated,
             info,
+        )
+
+    @partial(jax.jit, static_argnums=(0,), static_argnames=("seed", "options"))
+    def conditional_reset(
+        self, step_tuple, *, seed: Optional[int] = None, options: Optional[dict] = None
+    ):
+        def reset_fn(args):
+            step_tuple, (initial_grid, initial_context) = args
+            obs, reward, terminated, truncated, info = step_tuple
+            grid, context = obs
+            grid = jnp.where(terminated[:, None, None], initial_grid, grid)
+
+            for key in self.per_env_context_keys:
+                key_shape = context["per_env_context"][key].shape
+                # Add as many dimensions as needed after the batch dimension
+                expanded_terminated = terminated[
+                    (...,) + (None,) * (len(key_shape) - 1)
+                ]
+                context["per_env_context"][key] = jnp.where(
+                    expanded_terminated,  # adjust broadcasting as needed
+                    initial_context["per_env_context"][key],
+                    context["per_env_context"][key],
+                )
+            obs = (grid, context)
+            info["steps_elapsed"] = jnp.where(terminated, 0, info["steps_elapsed"])
+            info["reward_accumulated"] = jnp.where(
+                terminated, 0.0, info["reward_accumulated"]
+            )
+
+            new_terminated = jnp.zeros_like(terminated, dtype=bool)
+
+            return obs, reward, new_terminated, truncated, info
+
+        return jax.lax.cond(
+            step_tuple[2].any(),
+            reset_fn,
+            lambda x: x[0],
+            (step_tuple, self.initial_state),
         )
 
     def render(self, mode="human"):
