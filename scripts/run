@@ -21,9 +21,12 @@ from gym_cellular_automata.forest_fire.bulldozer.utils.render import (
     render,
     plot_grid_attribute,
 )
+import matplotlib
 
 DEFAULT_UPDATES = 40
 DEFAULT_MILISECOND_FRAME = 80
+
+matplotlib.use("agg")
 
 
 # Add at the beginning of the file, after imports
@@ -146,23 +149,24 @@ def generate_frames(
     }
 
     if no_train:
-        for i in tqdm(range(updates), desc="Generating frames"):
-            if i % each == 0:
-                (
-                    next_obs,
-                    reward,
-                    next_done,
-                    truncated,
-                    next_info,
-                ) = run(next_obs, next_info)
-                frames.append(
+        with trace("./profile"):
+            for i in tqdm(range(updates), desc="Generating frames"):
+                if i % each == 0:
                     (
-                        next_obs[0],
-                        next_obs[1]["per_env_context"]["wind_index"],
-                        next_obs[1]["time"],
-                        next_obs[1]["position"],
+                        next_obs,
+                        reward,
+                        next_done,
+                        truncated,
+                        next_info,
+                    ) = run(next_obs, next_info)
+                    frames.append(
+                        (
+                            next_obs[0],
+                            next_obs[1]["per_env_context"]["wind_index"],
+                            next_obs[1]["time"],
+                            next_obs[1]["position"],
+                        )
                     )
-                )
 
         games = []
         for i in range(frames[0][0].shape[0]):
