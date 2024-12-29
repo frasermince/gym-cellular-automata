@@ -509,13 +509,22 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         return render(self)
 
     def altitude_render(self):
-        return plot_grid_attribute(self._altitude, "Altitude")
+        altitudes = []
+        for a in range(self._altitude.shape[0]):
+            altitudes.append(plot_grid_attribute(self._altitude[a], "Altitude"))
+        return altitudes
 
     def density_render(self):
-        return plot_grid_attribute(self._density, "Density")
+        densities = []
+        for d in range(self._density.shape[0]):
+            densities.append(plot_grid_attribute(self._density[d], "Density"))
+        return densities
 
     def vegitation_render(self):
-        return plot_grid_attribute(self._vegitation, "Vegitation")
+        vegitations = []
+        for v in range(self._vegitation.shape[0]):
+            vegitations.append(plot_grid_attribute(self._vegitation[v], "Vegitation"))
+        return vegitations
 
     def _award(self, grid):
         """Reward Function

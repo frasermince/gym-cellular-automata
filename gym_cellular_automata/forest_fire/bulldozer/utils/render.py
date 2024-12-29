@@ -115,15 +115,12 @@ def plot_grid_attribute(grid, attribute_name):
         # Clear axes
         clear_ax(ax)
 
-        return plt.gcf()
+        return plt
 
     return main()
 
 
-def render(env, grid, time, pos, wind_index=None):
-    NROWS = env.nrows
-    NCOLS = env.ncols
-
+def render(env, grid, time, pos, pos_fire, wind_index=None):
     EMPTY = env._empty
     TREE = env._tree
     FIRE = env._fire
@@ -134,7 +131,7 @@ def render(env, grid, time, pos, wind_index=None):
     NORM, CMAP = get_norm_cmap(CELLS, COLORS)
 
     local_grid = moore_n(N_LOCAL, pos, grid, EMPTY)
-    pos_fseed = env._pos_fire
+    pos_fseed = pos_fire
 
     # Why two titles?
     # The env was registered (benchmark) or

@@ -17,6 +17,10 @@ from jax.profiler import trace
 
 import gym_cellular_automata as gymca
 from gym_cellular_automata.agents.jax_ppo import run_rollout_loop
+from gym_cellular_automata.forest_fire.bulldozer.utils.render import (
+    render,
+    plot_grid_attribute,
+)
 
 DEFAULT_UPDATES = 40
 DEFAULT_MILISECOND_FRAME = 80
@@ -36,12 +40,17 @@ print(f"Default platform: {DEFAULT_PLATFORM}")
 jax.config.update("jax_platform_name", DEFAULT_PLATFORM)
 
 
-def get_make_frame(env: Env, save_gif: bool):
+@gif.frame
+def make_frame(env, grid, time, position, pos_fire, wind_index):
+    render(env, grid, time, position, pos_fire, wind_index)
+
+
+def get_run(env: Env, save_gif: bool):
 
     warnings.filterwarnings("ignore", category=MatplotlibDeprecationWarning)
 
     # @gif.frame
-    def make_frame(obs, info):
+    def run(obs, info):
         # if save_gif:
         #     env.render()
         action = env.action_space.sample()
@@ -49,7 +58,7 @@ def get_make_frame(env: Env, save_gif: bool):
         step_tuple = env.conditional_reset(step_tuple)
         return step_tuple
 
-    return make_frame
+    return run
 
 
 def generate_frames(
@@ -63,42 +72,69 @@ def generate_frames(
     profile: bool = False,
     no_train: bool = False,
 ):
-    paths = {}
-    if save_gif and isinstance(name, str):
-        # Create main gifs directory
-        base_folder = Path().cwd() / "gifs"
-        base_folder.mkdir(exist_ok=True)
+    def get_paths(key: str, i: int) -> str:
+        paths = {}
+        if isinstance(name, str):
+            # Create main gifs directory
+            base_folder = Path().cwd() / "gifs"
+            base_folder.mkdir(exist_ok=True)
 
-        # Create env-specific subfolder
-        env_folder = base_folder / name
-        env_folder.mkdir(exist_ok=True)
+            # Create env-specific subfolder
+            env_folder = base_folder / name
+            env_folder.mkdir(exist_ok=True)
+            for j in range(num_envs):
+                index_folder = base_folder / env_folder / f"{name}_{j}"
+                index_folder.mkdir(exist_ok=True)
 
-        # Set paths for all files
-        paths = {
-            "gif": env_folder / f"{name}.gif",
-            "mp4": env_folder / f"{name}.mp4",
-            "altitude": env_folder / f"{name}_altitude.png",
-            "density": env_folder / f"{name}_density.png",
-            "vegitation": env_folder / f"{name}_vegitation.png",
-        }
+            # Set paths for all files
+            paths = {
+                "gif": base_folder
+                / env_folder
+                / f"{name}_{i}"
+                / f"{name}_{key}_{i}.gif",
+                "mp4": base_folder
+                / env_folder
+                / f"{name}_{i}"
+                / f"{name}_{key}_{i}.mp4",
+                "altitude": base_folder
+                / env_folder
+                / f"{name}_{i}"
+                / f"{name}_{key}_{i}_altitude.png",
+                "density": base_folder
+                / env_folder
+                / f"{name}_{i}"
+                / f"{name}_{key}_{i}_density.png",
+                "vegitation": base_folder
+                / env_folder
+                / f"{name}_{i}"
+                / f"{name}_{key}_{i}_vegitation.png",
+            }
+        return paths[key]
 
-    if save_gif and name == "advanced_bulldozer":
+    if no_train and name == "advanced_bulldozer":
         # Generate and save altitude plot
-        altitude_plot = env.altitude_render()
-        altitude_plot.savefig(paths["altitude"])
+        # Generate and save altitude plots
+        altitude_plots = env.altitude_render()
+        for i in range(num_envs):
+            altitude_plots[i].gcf().savefig(get_paths("altitude", i))
+            altitude_plots[i].close()
 
-        # Generate and save density plot
-        density_plot = env.density_render()
-        density_plot.savefig(paths["density"])
+        # Generate and save density plots
+        density_plots = env.density_render()
+        for i in range(num_envs):
+            density_plots[i].gcf().savefig(get_paths("density", i))
+            density_plots[i].close()
 
-        vegitation_plot = env.vegitation_render()
-        vegitation_plot.savefig(paths["vegitation"])
-
+        # Generate and save vegetation plots
+        vegetation_plots = env.vegitation_render()
+        for i in range(num_envs):
+            vegetation_plots[i].gcf().savefig(get_paths("vegitation", i))
+            vegetation_plots[i].close()
     import time
 
     start_time = time.time()
 
-    make_frame = get_make_frame(env, save_gif)
+    run = get_run(env, save_gif)
     frames = []
     next_obs, report = env.reset()
     next_info = {
@@ -118,10 +154,42 @@ def generate_frames(
                     next_done,
                     truncated,
                     next_info,
-                ) = make_frame(next_obs, next_info)
+                ) = run(next_obs, next_info)
                 frames.append(
-                    (next_obs[0], next_obs[1]["per_env_context"]["wind_index"])
+                    (
+                        next_obs[0],
+                        next_obs[1]["per_env_context"]["wind_index"],
+                        next_obs[1]["time"],
+                        next_obs[1]["position"],
+                    )
                 )
+
+        games = []
+        for i in range(frames[0][0].shape[0]):
+            games.append([])
+
+        for grid, wind_index, time_per_frame, position in tqdm(
+            frames, desc="Processing frames"
+        ):
+            for i in range(grid.shape[0]):
+                games[i].append(
+                    make_frame(
+                        env,
+                        grid[i],
+                        time_per_frame[i],
+                        position[i],
+                        env._pos_fire[i],
+                        wind_index[i],
+                    )
+                )
+
+        for i in range(frames[0][0].shape[0]):
+            gif.save(games[i], str(get_paths("gif", i)), duration=duration_between)
+            clip = mp.VideoFileClip(str(get_paths("gif", i)))
+            clip.write_videofile(
+                get_paths("mp4", i), fps=30, threads=1, codec="libx264"
+            )
+
     else:
         if profile:
             with trace("./profile"):
@@ -133,13 +201,6 @@ def generate_frames(
     #         frames.append(make_frame())
 
     end_time = time.time()
-    print(f"Generation completed in {end_time - start_time:.2f} seconds")
-
-    if save_gif:
-        gif.save(frames, str(paths["gif"]), duration=duration_between)
-        clip = mp.VideoFileClip(str(paths["gif"]))
-        clip.write_videofile(paths["mp4"], fps=30, threads=1, codec="libx264")
-
     print(f"Generation completed in {end_time - start_time:.2f} seconds")
 
 
