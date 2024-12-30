@@ -236,6 +236,10 @@ class PartiallyObservableForestFireJax(Operator):
         key, subkey = random.split(key)
         random_values_grow = random.uniform(key, grid.shape)
 
+        # Generate random fire ages (4-10) for new fires
+        key, fire_age_key = random.split(key)
+        new_fire_ages = random.randint(fire_age_key, grid.shape, 4, 11)
+
         # Sets to fire if the following:
         # - If the cell is a tree
         # - If any of the neighbors are on fire
@@ -258,10 +262,22 @@ class PartiallyObservableForestFireJax(Operator):
             ),
         )
 
+        new_fire_age = jnp.where(
+            (new_grid == self.fire) & (grid != self.fire),
+            new_fire_ages,
+            per_env_context["fire_age"],
+        )
+
         # Handle pinecone dispersal
         key, subkey = random.split(key)
         new_rows, new_cols, burn_mask = self._handle_pinecone_spread(
             new_grid, subkey, per_env_context, fire_mask
+        )
+
+        # Generate random fire ages for pinecone-induced fires
+        key, pinecone_fire_age_key = random.split(key)
+        pinecone_fire_ages = random.randint(
+            pinecone_fire_age_key, burn_mask.shape, 4, 11
         )
 
         # Update grid with pinecone effects
@@ -270,9 +286,12 @@ class PartiallyObservableForestFireJax(Operator):
         )
 
         # Update fire age
-        new_fire_age = jnp.where(
-            fire_mask, per_env_context["fire_age"] - 1, per_env_context["fire_age"]
+        new_fire_age = new_fire_age.at[new_rows, new_cols].set(
+            jnp.where(burn_mask, pinecone_fire_ages, new_fire_age[new_rows, new_cols])
         )
+
+        # Decrement existing fire ages
+        new_fire_age = jnp.where(fire_mask, new_fire_age - 1, new_fire_age)
         return new_grid, new_fire_age
 
     def update(self, grid, action, per_env_context, shared_context):
