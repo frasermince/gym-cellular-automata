@@ -18,6 +18,8 @@ from flax.linen.initializers import constant, orthogonal
 from flax.training.train_state import TrainState
 from torch.utils.tensorboard import SummaryWriter
 
+# jax.config.update("jax_platform_name", "tpu")
+# jax.config.update("jax_enable_x64", False)  # Use float32/bfloat16 on TPU
 # Fix weird OOM https://github.com/google/jax/discussions/6332#discussioncomment-1279991
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.6"
 # Fix CUDNN non-determinisim; https://github.com/google/jax/issues/4823#issuecomment-952835771
@@ -25,6 +27,8 @@ os.environ["TF_XLA_FLAGS"] = (
     "--xla_gpu_autotune_level=2 --xla_gpu_deterministic_reductions"
 )
 os.environ["TF_CUDNN DETERMINISTIC"] = "1"
+
+# jax.config.update("jax_default_matmul_precision", "bfloat16")
 
 
 @dataclass
@@ -569,24 +573,75 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
             )
 
         ppo_loss_grad_fn = jax.value_and_grad(ppo_loss, has_aux=True)
-        for _ in range(args.update_epochs):
+        num_minibatches = args.batch_size // args.minibatch_size
+
+        def update_epoch(carry, _):
+            agent_state, key = carry
             key, subkey = jax.random.split(key)
-            b_inds = jax.random.permutation(subkey, args.batch_size, independent=True)
-            for start in range(0, args.batch_size, args.minibatch_size):
-                end = start + args.minibatch_size
-                mb_inds = b_inds[start:end]
-                (loss, (pg_loss, v_loss, entropy_loss, approx_kl)), grads = (
-                    ppo_loss_grad_fn(
-                        agent_state.params,
-                        (b_grid_obs[mb_inds], b_position_obs[mb_inds]),
-                        b_actions[mb_inds],
-                        b_logprobs[mb_inds],
-                        b_advantages[mb_inds],
-                        b_returns[mb_inds],
-                    )
+            permutation = jax.random.permutation(
+                subkey, args.batch_size, independent=True
+            ).reshape((num_minibatches, args.minibatch_size))
+
+            def update_minibatch(carry, perm_indices):
+                agent_state, loss, pg_loss, v_loss, entropy_loss, approx_kl = carry
+                (
+                    new_loss,
+                    (new_pg_loss, new_v_loss, new_entropy_loss, new_approx_kl),
+                ), grads = ppo_loss_grad_fn(
+                    agent_state.params,
+                    (b_grid_obs[perm_indices], b_position_obs[perm_indices]),
+                    b_actions[perm_indices],
+                    b_logprobs[perm_indices],
+                    b_advantages[perm_indices],
+                    b_returns[perm_indices],
                 )
                 agent_state = agent_state.apply_gradients(grads=grads)
-        return agent_state, loss, pg_loss, v_loss, entropy_loss, approx_kl, key
+                return (
+                    agent_state,
+                    loss + new_loss,
+                    pg_loss + new_pg_loss,
+                    v_loss + new_v_loss,
+                    entropy_loss + new_entropy_loss,
+                    approx_kl + new_approx_kl,
+                ), None
+
+            # Initialize with dummy values for losses since they'll be overwritten
+            init_carry = (agent_state, 0.0, 0.0, 0.0, 0.0, 0.0)
+            (agent_state, loss, pg_loss, v_loss, entropy_loss, approx_kl), _ = (
+                jax.lax.scan(update_minibatch, init_carry, permutation)
+            )
+            return (agent_state, key), (
+                loss / num_minibatches,
+                pg_loss / num_minibatches,
+                v_loss / num_minibatches,
+                entropy_loss / num_minibatches,
+                approx_kl / num_minibatches,
+            )
+
+        init_carry = (agent_state, key)
+        (final_agent_state, final_key), (
+            loss,
+            pg_loss,
+            v_loss,
+            entropy_loss,
+            approx_kl,
+        ) = jax.lax.scan(update_epoch, init_carry, jnp.arange(args.update_epochs))
+
+        # Take the mean across epochs
+        loss = loss.mean()
+        pg_loss = pg_loss.mean()
+        v_loss = v_loss.mean()
+        entropy_loss = entropy_loss.mean()
+        approx_kl = approx_kl.mean()
+        return (
+            final_agent_state,
+            loss,
+            pg_loss,
+            v_loss,
+            entropy_loss,
+            approx_kl,
+            final_key,
+        )
 
     # TRY NOT TO MODIFY: start the game
     global_step = 0
@@ -740,3 +795,4 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
         json.dump(grid_obs_list, f)
     # envs.close()
     writer.close()
+    return grid_obs_list, agent_state
