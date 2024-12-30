@@ -149,7 +149,7 @@ def generate_frames(
     }
 
     if no_train:
-        with trace("./profile"):
+        with trace("./profile", create_perfetto_link=True, create_perfetto_trace=True):
             for i in tqdm(range(updates), desc="Generating frames"):
                 if i % each == 0:
                     (
@@ -196,7 +196,9 @@ def generate_frames(
 
     else:
         if profile:
-            with trace("./profile"):
+            with trace(
+                "./profile", create_perfetto_link=True, create_perfetto_trace=True
+            ):
                 run_rollout_loop(env, updates, num_envs=num_envs)
         else:
             run_rollout_loop(env, updates, num_envs=num_envs)
