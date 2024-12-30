@@ -199,7 +199,10 @@ def generate_frames(
             with trace(
                 "./profile", create_perfetto_link=True, create_perfetto_trace=True
             ):
-                run_rollout_loop(env, updates, num_envs=num_envs)
+                grid_obs_list, agent_state = run_rollout_loop(
+                    env, updates, num_envs=num_envs
+                )
+                grid_obs_list.block_until_ready()
         else:
             run_rollout_loop(env, updates, num_envs=num_envs)
     # for i in tqdm(range(updates), desc="Generating frames"):
