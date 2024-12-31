@@ -510,14 +510,22 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
                 context["position"],
             ),
         ).squeeze()
-        lastgaelam = 0
-        for t in reversed(range(args.num_steps)):
-            if t == args.num_steps - 1:
-                nextnonterminal = 1.0 - next_done
-                nextvalues = next_value
-            else:
-                nextnonterminal = 1.0 - storage.dones[t + 1]
-                nextvalues = storage.values[t + 1]
+        lastgaelam = jnp.zeros(next_done.shape)
+
+        def gae_step(carry, t):
+            lastgaelam, storage = carry
+            nextnonterminal = jax.lax.cond(
+                t == args.num_steps - 1,
+                lambda _: 1.0 - next_done,
+                lambda _: 1.0 - storage.dones[t + 1],
+                None,
+            )
+            nextvalues = jax.lax.cond(
+                t == args.num_steps - 1,
+                lambda _: next_value,
+                lambda _: storage.values[t + 1],
+                None,
+            )
             delta = (
                 storage.rewards[t]
                 + args.gamma * nextvalues * nextnonterminal
@@ -526,9 +534,15 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
             lastgaelam = (
                 delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
             )
+
             storage = storage.replace(
                 advantages=storage.advantages.at[t].set(lastgaelam)
             )
+            return (lastgaelam, storage), None
+
+        (lastgaelam, storage), _ = jax.lax.scan(
+            gae_step, (lastgaelam, storage), jnp.arange(args.num_steps - 1, -1, -1)
+        )
         storage = storage.replace(returns=storage.advantages + storage.values)
         return storage
 
