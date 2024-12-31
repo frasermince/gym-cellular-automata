@@ -14,6 +14,7 @@ import optax
 from tqdm import tqdm
 import json
 
+from jax.sharding import PartitionSpec as P, NamedSharding
 from flax.linen.initializers import constant, orthogonal
 from flax.training.train_state import TrainState
 from torch.utils.tensorboard import SummaryWriter
@@ -562,6 +563,19 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
         b_actions = storage.actions.reshape((-1,) + (env.action_space.shape[-1],))
         b_advantages = storage.advantages.reshape(-1)
         b_returns = storage.returns.reshape(-1)
+        if len(jax.devices()) >= 4:
+            mesh = jax.make_mesh((4,), ("x"))
+            batch_sharding = NamedSharding(mesh, P("x"))
+            b_grid_obs = jax.lax.with_sharding_constraint(b_grid_obs, batch_sharding)
+            b_position_obs = jax.lax.with_sharding_constraint(
+                b_position_obs, batch_sharding
+            )
+            b_logprobs = jax.lax.with_sharding_constraint(b_logprobs, batch_sharding)
+            b_actions = jax.lax.with_sharding_constraint(b_actions, batch_sharding)
+            b_advantages = jax.lax.with_sharding_constraint(
+                b_advantages, batch_sharding
+            )
+            b_returns = jax.lax.with_sharding_constraint(b_returns, batch_sharding)
 
         def ppo_loss(params, x, a, logp, mb_advantages, mb_returns):
             newlogprob, entropy, newvalue = get_action_and_value2(params, x, a)
@@ -673,6 +687,17 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
     global_step = 0
     start_time = time.time()
     next_obs, report = env.reset()
+    if len(jax.devices()) >= 4:
+        mesh = jax.make_mesh((4,), ("x"))
+        grid = jax.device_put(next_obs[0], NamedSharding(mesh, P("x")))
+        context = next_obs[1]
+        per_env_context = context["per_env_context"]
+        for context_key in env.per_env_context_keys:
+            per_env_context[context_key] = jax.device_put(
+                per_env_context[context_key], NamedSharding(mesh, P("x"))
+            )
+        next_obs = (grid, context)
+
     next_done = jnp.full(num_envs, False)
     next_info = {
         "TimeLimit.truncated": jnp.full(num_envs, False),
@@ -746,6 +771,9 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
         postfix={"SPS": "0", "avg_return": "0.0", "current_return": "0.0"},
     )
     for iteration in progress_bar:
+        # if len(jax.devices()) >= 4:
+        #     flattened = next_obs[0].reshape(-1, next_obs[0].shape[-1])
+        #     jax.debug.visualize_array_sharding(flattened)
         iteration_time_start = time.time()
         (
             agent_state,
