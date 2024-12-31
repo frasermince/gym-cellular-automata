@@ -190,18 +190,27 @@ class Actor(nn.Module):
 
     @nn.compact
     def __call__(self, x):
-        # Define shared network layers
         features = nn.Dense(64)(x)
         features = nn.relu(features)
         features = nn.Dense(64)(features)
         features = nn.relu(features)
 
-        # Multiple heads for each action dimension
-        logits = []
+        max_dim = max(self.action_dims)
 
+        # Create separate Dense layers for each action dimension
+        logits = []
         for dim in self.action_dims:
             head = nn.Dense(dim)(features)
+            if max_dim > dim:
+                # This -1e10 and masking concerns me a little. Make sure this
+                # won't mess up action sampling.
+                head = jnp.pad(
+                    head, ((0, 0), (0, max_dim - dim)), constant_values=-1e10
+                )
             logits.append(head)
+
+        # Stack along action dimension
+        logits = jnp.stack(logits, axis=1)  # [batch, num_action_types, max_dim]
 
         return logits
 
@@ -427,21 +436,21 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
             next_grid_obs,
             next_position_obs,
         )
-        logits_set = actor.apply(agent_state.params["actor_params"], hidden)
+        action_logits = actor.apply(agent_state.params["actor_params"], hidden)
 
         # sample action: Gumbel-softmax trick
         # see https://stats.stackexchange.com/questions/359442/sampling-from-a-categorical-distribution
-        logprobs = []
-        actions = []
-        for logits in logits_set:
-            key, subkey = jax.random.split(key)
-            u = jax.random.uniform(subkey, shape=logits.shape)
-            action = jnp.argmax(logits - jnp.log(-jnp.log(u)), axis=1)
+        key, subkey = jax.random.split(key)
+        u = jax.random.uniform(subkey, shape=action_logits.shape)
+
+        def sample_action(logits, u):
+            action = jnp.argmax(logits - jnp.log(-jnp.log(u)), axis=-1)
             logprob = jax.nn.log_softmax(logits)[jnp.arange(action.shape[0]), action]
-            logprobs.append(logprob)
-            actions.append(action)
-        logprobs = jnp.stack(logprobs, axis=-1)
-        actions = jnp.stack(actions, axis=-1)
+            return action, logprob
+
+        actions, logprobs = jax.vmap(sample_action, in_axes=(1, 1), out_axes=1)(
+            action_logits, u
+        )
 
         value = critic.apply(agent_state.params["critic_params"], hidden)
         storage = storage.replace(
@@ -467,18 +476,21 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
         # normalize the logits https://gregorygundersen.com/blog/2020/02/09/log-sum-exp/
         entropies = []
         logprobs = []
-        for i, logit in enumerate(logits_set):
-            logprob = jax.nn.log_softmax(logit)[
-                jnp.arange(action.shape[0]), action[:, i]
-            ]
-            logprobs.append(logprob)
+
+        def process_logits(logit, act):
+            logprob = jax.nn.log_softmax(logit)[jnp.arange(act.shape[0]), act]
             logits = logit - jax.scipy.special.logsumexp(logit, axis=-1, keepdims=True)
             logits = logits.clip(min=jnp.finfo(logits.dtype).min)
             p_log_p = logits * jax.nn.softmax(logits)
             entropy = -p_log_p.sum(-1)
-            entropies.append(entropy)
+            return logprob, entropy
+
+        logprobs, entropies = jax.vmap(process_logits, in_axes=(1, 1), out_axes=1)(
+            logits_set, action
+        )
+
         value = critic.apply(params["critic_params"], hidden).squeeze()
-        return jnp.stack(logprobs, axis=-1), jnp.stack(entropies, axis=-1), value
+        return logprobs, entropies, value
 
     @jax.jit
     def compute_gae(
