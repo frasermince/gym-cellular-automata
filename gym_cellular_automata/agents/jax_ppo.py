@@ -29,6 +29,8 @@ os.environ["TF_XLA_FLAGS"] = (
 )
 os.environ["TF_CUDNN DETERMINISTIC"] = "1"
 
+SHARD_STORAGE = False
+SHOULD_SHARD = True
 # jax.config.update("jax_default_matmul_precision", "bfloat16")
 
 
@@ -405,20 +407,65 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
 
     # ALGO Logic: Storage setup
     grid, context = env.observation_space
-    storage = Storage(
-        grid_obs=jnp.zeros((args.num_steps,) + grid.shape),
-        position_obs=jnp.zeros((args.num_steps,) + context["position"].shape),
-        actions=jnp.zeros(
-            (args.num_steps,) + env.action_space.shape,
-            dtype=jnp.int32,
-        ),
-        logprobs=jnp.zeros(((args.num_steps,) + env.action_space.shape)),
-        dones=jnp.zeros((args.num_steps, num_envs)),
-        values=jnp.zeros((args.num_steps, num_envs)),
-        advantages=jnp.zeros((args.num_steps, num_envs)),
-        returns=jnp.zeros((args.num_steps, num_envs)),
-        rewards=jnp.zeros((args.num_steps, num_envs)),
-    )
+    if len(jax.devices()) >= 4 and SHARD_STORAGE and SHOULD_SHARD:
+        mesh = jax.make_mesh((4,), ("devices"))
+        with mesh:
+            storage = Storage(
+                grid_obs=jax.device_put(
+                    jnp.zeros((args.num_steps,) + grid.shape),
+                    NamedSharding(mesh, P("devices", None, None, None)),
+                ),
+                position_obs=jax.device_put(
+                    jnp.zeros((args.num_steps,) + context["position"].shape),
+                    NamedSharding(mesh, P("devices", None)),
+                ),
+                actions=jax.device_put(
+                    jnp.zeros(
+                        (args.num_steps,) + env.action_space.shape,
+                        dtype=jnp.int32,
+                    ),
+                    NamedSharding(mesh, P("devices", None)),
+                ),
+                logprobs=jax.device_put(
+                    jnp.zeros(((args.num_steps,) + env.action_space.shape)),
+                    NamedSharding(mesh, P("devices", None)),
+                ),
+                dones=jax.device_put(
+                    jnp.zeros((args.num_steps, num_envs)),
+                    NamedSharding(mesh, P("devices")),
+                ),
+                values=jax.device_put(
+                    jnp.zeros((args.num_steps, num_envs)),
+                    NamedSharding(mesh, P("devices")),
+                ),
+                advantages=jax.device_put(
+                    jnp.zeros((args.num_steps, num_envs)),
+                    NamedSharding(mesh, P("devices")),
+                ),
+                returns=jax.device_put(
+                    jnp.zeros((args.num_steps, num_envs)),
+                    NamedSharding(mesh, P("devices")),
+                ),
+                rewards=jax.device_put(
+                    jnp.zeros((args.num_steps, num_envs)),
+                    NamedSharding(mesh, P("devices")),
+                ),
+            )
+    else:
+        storage = Storage(
+            grid_obs=jnp.zeros((args.num_steps,) + grid.shape),
+            position_obs=jnp.zeros((args.num_steps,) + context["position"].shape),
+            actions=jnp.zeros(
+                (args.num_steps,) + env.action_space.shape,
+                dtype=jnp.int32,
+            ),
+            logprobs=jnp.zeros(((args.num_steps,) + env.action_space.shape)),
+            dones=jnp.zeros((args.num_steps, num_envs)),
+            values=jnp.zeros((args.num_steps, num_envs)),
+            advantages=jnp.zeros((args.num_steps, num_envs)),
+            returns=jnp.zeros((args.num_steps, num_envs)),
+            rewards=jnp.zeros((args.num_steps, num_envs)),
+        )
 
     @jax.jit
     def get_action_and_value(
@@ -563,7 +610,25 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
         b_actions = storage.actions.reshape((-1,) + (env.action_space.shape[-1],))
         b_advantages = storage.advantages.reshape(-1)
         b_returns = storage.returns.reshape(-1)
-        if len(jax.devices()) >= 4:
+        # Generate keys for all epochs
+        keys = jax.random.split(key, args.update_epochs)
+
+        num_minibatches = args.batch_size // args.minibatch_size
+        # vmap the permutation generation over epoch keys
+        permutations = jax.vmap(
+            lambda k: jax.random.permutation(k, args.batch_size).reshape(
+                (num_minibatches, args.minibatch_size)
+            )
+        )(keys)
+
+        if len(jax.devices()) >= 4 and not SHARD_STORAGE and SHOULD_SHARD:
+            # print("Sharding visualization grid shape", b_grid_obs.shape)
+            # flattened = b_grid_obs.reshape(
+            #     -1, b_grid_obs.shape[-2] * b_grid_obs.shape[-1]
+            # )
+            # print("Sharding visualization flattened grid shape", flattened.shape)
+            # jax.debug.visualize_array_sharding(flattened)
+
             mesh = jax.make_mesh((4,), ("x"))
             batch_sharding = NamedSharding(mesh, P("x"))
             b_grid_obs = jax.lax.with_sharding_constraint(b_grid_obs, batch_sharding)
@@ -576,6 +641,11 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
                 b_advantages, batch_sharding
             )
             b_returns = jax.lax.with_sharding_constraint(b_returns, batch_sharding)
+
+            permutations = jax.lax.with_sharding_constraint(
+                permutations,
+                NamedSharding(mesh, P(None, None, "x")),  # Shard minibatch dimension
+            )
 
         def ppo_loss(params, x, a, logp, mb_advantages, mb_returns):
             newlogprob, entropy, newvalue = get_action_and_value2(params, x, a)
@@ -598,7 +668,16 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
             # TODO: I'm very suspicious of this line. We are meaning the two
             # logprobs for the actions together. Soon as we add extensions this
             # will be a third action. We need to confirm this is right.
+            # jax.debug.visualize_array_sharding(
+            #     pg_loss1.reshape(pg_loss1.shape[:-2] + (-1,))
+            # )
+            # jax.debug.visualize_array_sharding(
+            #     pg_loss2.reshape(pg_loss2.shape[:-2] + (-1,))
+            # )
             pg_loss = jnp.maximum(pg_loss1, pg_loss2).mean()
+            # jax.debug.visualize_array_sharding(
+            #     pg_loss.reshape(pg_loss.shape[:-2] + (-1,))
+            # )
 
             # Value loss
             v_loss = 0.5 * ((newvalue - mb_returns) ** 2).mean()
@@ -613,14 +692,14 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
             )
 
         ppo_loss_grad_fn = jax.value_and_grad(ppo_loss, has_aux=True)
-        num_minibatches = args.batch_size // args.minibatch_size
 
-        def update_epoch(carry, _):
+        def update_epoch(carry, scan_inputs):
             agent_state, key = carry
+            epoch_idx, epoch_permutation = scan_inputs
             key, subkey = jax.random.split(key)
-            permutation = jax.random.permutation(
-                subkey, args.batch_size, independent=True
-            ).reshape((num_minibatches, args.minibatch_size))
+            # permutation = jax.random.permutation(
+            #     subkey, args.batch_size, independent=True
+            # ).reshape((num_minibatches, args.minibatch_size))
 
             def update_minibatch(carry, perm_indices):
                 agent_state, loss, pg_loss, v_loss, entropy_loss, approx_kl = carry
@@ -635,6 +714,10 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
                     b_advantages[perm_indices],
                     b_returns[perm_indices],
                 )
+                # print("grads", grads.shape)
+                # jax.debug.visualize_array_sharding(
+                #     new_loss.reshape(new_loss.shape[:-2] + (-1,))
+                # )
                 agent_state = agent_state.apply_gradients(grads=grads)
                 return (
                     agent_state,
@@ -648,7 +731,7 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
             # Initialize with dummy values for losses since they'll be overwritten
             init_carry = (agent_state, 0.0, 0.0, 0.0, 0.0, 0.0)
             (agent_state, loss, pg_loss, v_loss, entropy_loss, approx_kl), _ = (
-                jax.lax.scan(update_minibatch, init_carry, permutation)
+                jax.lax.scan(update_minibatch, init_carry, epoch_permutation)
             )
             return (agent_state, key), (
                 loss / num_minibatches,
@@ -665,7 +748,9 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
             v_loss,
             entropy_loss,
             approx_kl,
-        ) = jax.lax.scan(update_epoch, init_carry, jnp.arange(args.update_epochs))
+        ) = jax.lax.scan(
+            update_epoch, init_carry, (jnp.arange(args.update_epochs), permutations)
+        )
 
         # Take the mean across epochs
         loss = loss.mean()
