@@ -120,10 +120,12 @@ def plot_grid_attribute(grid, attribute_name):
     return main()
 
 
-def render(env, grid, time, pos, pos_fire, wind_index=None):
-    EMPTY = env._empty
-    TREE = env._tree
-    FIRE = env._fire
+def render(
+    empty, tree, fire, title, grid, time, pos, cell_count, pos_fire, wind_index=None
+):
+    EMPTY = empty
+    TREE = tree
+    FIRE = fire
 
     # Assumes that cells values are in ascending order and paired with its colors
     COLORS = [COLOR_EMPTY, COLOR_TREE, COLOR_FIRE]
@@ -136,7 +138,7 @@ def render(env, grid, time, pos, pos_fire, wind_index=None):
     # Why two titles?
     # The env was registered (benchmark) or
     # The env was directly created (prototype)
-    TITLE = env.spec.id if env.spec is not None else env.title
+    TITLE = title
 
     def main():
         plt.style.use(FIGSTYLE)
@@ -162,11 +164,11 @@ def render(env, grid, time, pos, pos_fire, wind_index=None):
 
         plot_gauge(ax_gauge, time)
 
-        d = env.count_cells()
+        d = cell_count
         counts = d[EMPTY], d[TREE], d[FIRE]
         plot_counts(ax_counts, *counts)
 
-        return plt.gcf()
+        return fig
 
     def plot_local(ax, grid):
         nrows, ncols = grid.shape
