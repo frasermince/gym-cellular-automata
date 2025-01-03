@@ -412,6 +412,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
     # Gym API
     # step, reset & seed methods inherited from parent class
 
+    @partial(jax.jit, static_argnums=0)
     def stateless_step(self, action, obs, info):
         # MDP Transition
         grid, context = obs

@@ -148,26 +148,36 @@ def generate_frames(
         "reward": jnp.zeros(num_envs),
     }
 
-    if no_train:
-        with trace("./profile", create_perfetto_link=True, create_perfetto_trace=True):
-            for i in tqdm(range(updates), desc="Generating frames"):
-                if i % each == 0:
+    def generate_frames(next_obs, next_info):
+        for i in tqdm(range(updates), desc="Generating frames"):
+            if i % each == 0:
+                (
+                    next_obs,
+                    reward,
+                    next_done,
+                    truncated,
+                    next_info,
+                ) = run(next_obs, next_info)
+                frames.append(
                     (
-                        next_obs,
-                        reward,
-                        next_done,
-                        truncated,
-                        next_info,
-                    ) = run(next_obs, next_info)
-                    frames.append(
-                        (
-                            next_obs[0],
-                            next_obs[1]["per_env_context"]["wind_index"],
-                            next_obs[1]["time"],
-                            next_obs[1]["position"],
-                        )
+                        next_obs[0],
+                        next_obs[1]["per_env_context"]["wind_index"],
+                        next_obs[1]["time"],
+                        next_obs[1]["position"],
                     )
+                )
+        return next_obs, next_info
 
+    if no_train:
+        if profile:
+            with trace(
+                "./profile",
+                create_perfetto_link=True,
+                create_perfetto_trace=True,
+            ):
+                next_obs, next_info = generate_frames(next_obs, next_info)
+        else:
+            next_obs, next_info = generate_frames(next_obs, next_info)
         games = []
         for i in range(frames[0][0].shape[0]):
             games.append([])
