@@ -19,6 +19,9 @@ from flax.linen.initializers import constant, orthogonal
 from flax.training.train_state import TrainState
 from torch.utils.tensorboard import SummaryWriter
 
+padding_type = "SAME"
+# padding_type = "VALID"
+
 # jax.config.update("jax_platform_name", "tpu")
 # jax.config.update("jax_enable_x64", False)  # Use float32/bfloat16 on TPU
 # Fix weird OOM https://github.com/google/jax/discussions/6332#discussioncomment-1279991
@@ -115,7 +118,7 @@ class Network(nn.Module):
             32,
             kernel_size=(8, 8),
             strides=(4, 4),
-            padding="VALID",
+            padding=padding_type,
             kernel_init=orthogonal(np.sqrt(2)),
             bias_init=constant(0.0),
         )(grid)
@@ -127,7 +130,7 @@ class Network(nn.Module):
             64,
             kernel_size=(4, 4),
             strides=(2, 2),
-            padding="VALID",
+            padding=padding_type,
             kernel_init=orthogonal(np.sqrt(2)),
             bias_init=constant(0.0),
         )(grid)
@@ -139,7 +142,7 @@ class Network(nn.Module):
             64,
             kernel_size=(3, 3),
             strides=(1, 1),
-            padding="VALID",
+            padding=padding_type,
             kernel_init=orthogonal(np.sqrt(2)),
             bias_init=constant(0.0),
         )(grid)
@@ -930,7 +933,9 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
 
     # Save grid observations to JSON file
     grid_obs = jax.device_get(storage.grid_obs)  # Get array from device
-    with open(f"runs/{run_name}_grid_obs.pkl", "wb") as f:  # Note: 'wb' for binary write
+    with open(
+        f"runs/{run_name}_grid_obs.pkl", "wb"
+    ) as f:  # Note: 'wb' for binary write
         pickle.dump(grid_obs, f)
     # envs.close()
     writer.close()
