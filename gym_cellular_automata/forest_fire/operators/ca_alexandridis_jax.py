@@ -59,27 +59,25 @@ class PartiallyObservableForestFireJax(Operator):
     def _compute_burn_probability(self, vegetation, density, wind, slope):
         """Vectorized computation of burn probabilities"""
         # Convert discrete values to probabilities using JAX's type-safe operations
-        p_veg = jnp.where(
-            vegetation == 1,
-            -0.3,
-            jnp.where(
-                vegetation == 2,
-                0.0,
-                jnp.where(vegetation == 3, 0.3, jnp.where(vegetation == 4, 0.6, 1.0)),
-            ),
-        )
+        veg_probs = jnp.array(
+            [-999, -0.1, 0.2, 0.5, 0.8, 1.2]
+        )  # -999 is a sentinel for index 0
+        den_probs = jnp.array([-999, -0.2, 0.2, 0.5, 0.8, 1.2])
 
-        p_den = jnp.where(
-            density == 1,
-            -0.4,
-            jnp.where(
-                density == 2,
-                0.0,
-                jnp.where(density == 3, 0.3, jnp.where(density == 4, 0.6, 1.0)),
-            ),
-        )
+        # Safe lookup function
+        def safe_lookup(idx, probs_array):
+            safe_idx = jnp.clip(idx, 1, 5)  # Clip to valid range 1-5
+            return probs_array[safe_idx]
 
-        p_h = 0.58
+        lookup_vmap = vmap(safe_lookup, in_axes=(0, None))
+
+        # Use vmapped function
+        p_veg = lookup_vmap(vegetation, veg_probs)
+        p_den = lookup_vmap(density, den_probs)
+
+        # Vectorize the lookup
+
+        p_h = 0.48
         a = 0.078
         p_slope = jnp.exp(a * slope)
 
@@ -91,27 +89,23 @@ class PartiallyObservableForestFireJax(Operator):
     @partial(jit, static_argnums=(0,))
     def _compute_pinecone_burn_probability(self, vegetation, density):
         """Vectorized computation of pinecone burn probabilities"""
-        p_veg = jnp.where(
-            vegetation == 1,
-            0.0,
-            jnp.where(
-                vegetation == 2,
-                0.8,
-                jnp.where(vegetation == 3, 1.6, jnp.where(vegetation == 4, 2.0, 2.5)),
-            ),
-        )
+        veg_probs = jnp.array(
+            [-999, -0.1, 0.2, 0.5, 0.8, 1.2]
+        )  # -999 is a sentinel for index 0
+        den_probs = jnp.array([-999, -0.2, 0.2, 0.5, 0.8, 1.2])
 
-        p_den = jnp.where(
-            density == 1,
-            0.0,
-            jnp.where(
-                density == 2,
-                0.6,
-                jnp.where(density == 3, 1.2, jnp.where(density == 4, 1.5, 2.0)),
-            ),
-        )
+        # Safe lookup function
+        def safe_lookup(idx, probs_array):
+            safe_idx = jnp.clip(idx, 1, 5)  # Clip to valid range 1-5
+            return probs_array[safe_idx]
 
-        return 0.58 * (1 + p_veg) * (1 + p_den)
+        lookup_vmap = vmap(safe_lookup, in_axes=(0, None))
+
+        # Use vmapped function
+        p_veg = lookup_vmap(vegetation, veg_probs)
+        p_den = lookup_vmap(density, den_probs)
+
+        return 0.48 * (1 + p_veg) * (1 + p_den)
 
     @partial(jit, static_argnums=(0,))
     def _handle_pinecone_spread(self, grid, key, context, fire_mask, max_pinecones=5):
@@ -236,9 +230,9 @@ class PartiallyObservableForestFireJax(Operator):
         key, subkey = random.split(key)
         random_values_grow = random.uniform(key, grid.shape)
 
-        # Generate random fire ages (4-10) for new fires
+        # Generate random fire ages (8-15) for new fires
         key, fire_age_key = random.split(key)
-        new_fire_ages = random.randint(fire_age_key, grid.shape, 4, 11)
+        new_fire_ages = random.randint(fire_age_key, grid.shape, 8, 15)
 
         # Sets to fire if the following:
         # - If the cell is a tree

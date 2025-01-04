@@ -333,7 +333,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         self._fire_age = jnp.zeros((num_envs, nrows, ncols))
         self._p_fire = 0.00033
         self._p_tree = 0.00333
-        self._p_wind_change = 0.03
+        self._p_wind_change = 0.06
 
         self._effects = {self._tree: self._empty}  # Substitution Effect
 

@@ -929,9 +929,9 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
         )
 
     # Save grid observations to JSON file
-    grid_obs_list = jax.device_get(storage.grid_obs).tolist()
-    with open(f"runs/{run_name}_grid_obs.json", "w") as f:
-        json.dump(grid_obs_list, f)
+    grid_obs = jax.device_get(storage.grid_obs)  # Get array from device
+    with open(f"runs/{run_name}_grid_obs.pkl", "wb") as f:  # Note: 'wb' for binary write
+        pickle.dump(grid_obs, f)
     # envs.close()
     writer.close()
     return grid_obs_list, agent_state
