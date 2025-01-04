@@ -12,7 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 from tqdm import tqdm
-import json
+import pickle
 
 from jax.sharding import PartitionSpec as P, NamedSharding
 from flax.linen.initializers import constant, orthogonal
@@ -939,4 +939,4 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
         pickle.dump(grid_obs, f)
     # envs.close()
     writer.close()
-    return grid_obs_list, agent_state
+    return grid_obs, agent_state
