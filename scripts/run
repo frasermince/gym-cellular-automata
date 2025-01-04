@@ -13,6 +13,7 @@ from gymnasium.error import NameNotFound
 from jax.lib import xla_bridge
 from matplotlib._api.deprecation import MatplotlibDeprecationWarning
 from tqdm import tqdm
+import pickle
 from jax.profiler import trace
 
 import gym_cellular_automata as gymca
@@ -288,7 +289,14 @@ def generate_frames(
                 )
                 grid_obs_list.block_until_ready()
         else:
-            run_rollout_loop(env, updates, num_envs=num_envs)
+            grid_obs, agent_state, run_name = run_rollout_loop(
+                env, updates, num_envs=num_envs
+            )
+            with open(
+                f"runs/{run_name}_params.pkl", "wb"
+            ) as f:  # Note: 'wb' for binary write
+                pickle.dump(agent_state.params, f)
+
     # for i in tqdm(range(updates), desc="Generating frames"):
     #     if i % each == 0:
     #         frames.append(make_frame())

@@ -939,4 +939,4 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
         pickle.dump(grid_obs, f)
     # envs.close()
     writer.close()
-    return grid_obs, agent_state
+    return grid_obs, agent_state, run_name
