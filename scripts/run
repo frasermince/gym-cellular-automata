@@ -33,6 +33,9 @@ DEFAULT_UPDATES = 40
 DEFAULT_MILISECOND_FRAME = 80
 
 matplotlib.use("agg")
+# Disable JAX JIT compilation
+# jax.config.update("jax_disable_jit", True)
+# print("JAX JIT compilation has been disabled.")
 
 
 # Add at the beginning of the file, after imports
@@ -373,13 +376,21 @@ def generate_gif_envs(
     profile=False,
     size=256,
     no_train=False,
+    speed_move=0.12,
+    speed_multiplier=1,
 ):
     prototypes = ["helicopter", "bulldozer", "advanced_bulldozer"]
 
     proto_id = 2
     name = prototypes[proto_id]
     ProtoEnv = gymca.prototypes[proto_id]
-    env = ProtoEnv(nrows=size, ncols=size, num_envs=num_envs)
+    env = ProtoEnv(
+        nrows=size,
+        ncols=size,
+        num_envs=num_envs,
+        speed_move=speed_move * speed_multiplier,
+        speed_act=0.03 * speed_multiplier,
+    )
 
     generate_frames(
         env,
@@ -444,6 +455,9 @@ parser.add_argument(
     help="Run without training",
 )
 
+parser.add_argument("--speed-move", "-m", default=0.12)
+
+parser.add_argument("--speed-multiplier", default=1)
 parser.add_argument(
     "--size",
     "-z",
@@ -463,4 +477,10 @@ if __name__ == "__main__":
         args.profile,
         args.size,
         args.no_train,
+        int(args.speed_move) if isinstance(args.speed_move, str) else args.speed_move,
+        (
+            int(args.speed_multiplier)
+            if isinstance(args.speed_multiplier, str)
+            else args.speed_multiplier
+        ),
     )
