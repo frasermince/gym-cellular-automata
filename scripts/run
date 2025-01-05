@@ -13,6 +13,7 @@ from gymnasium.error import NameNotFound
 from jax.lib import xla_bridge
 from matplotlib._api.deprecation import MatplotlibDeprecationWarning
 from tqdm import tqdm
+import flax
 import pickle
 from jax.profiler import trace
 
@@ -87,15 +88,53 @@ def get_run(env: Env, save_gif: bool):
     warnings.filterwarnings("ignore", category=MatplotlibDeprecationWarning)
 
     # @gif.frame
-    def run(obs, info):
+    def run(obs, info, episode_stats):
         # if save_gif:
         #     env.render()
         action = env.action_space.sample()
         step_tuple = env.stateless_step(action, obs, info)
+        (
+            next_obs,
+            reward,
+            next_done,
+            truncated,
+            next_info,
+        ) = step_tuple
+
+        new_episode_return = episode_stats.episode_returns + next_info["reward"]
+        new_episode_length = episode_stats.episode_lengths + 1
+        episode_stats = episode_stats.replace(
+            episode_returns=(new_episode_return)
+            * (1 - next_info["terminated"])
+            * (1 - next_info["TimeLimit.truncated"]),
+            episode_lengths=(new_episode_length)
+            * (1 - next_info["terminated"])
+            * (1 - next_info["TimeLimit.truncated"]),
+            # only update the `returned_episode_returns` if the episode is done
+            returned_episode_returns=jnp.where(
+                next_info["terminated"] + next_info["TimeLimit.truncated"],
+                new_episode_return,
+                episode_stats.returned_episode_returns,
+            ),
+            returned_episode_lengths=jnp.where(
+                next_info["terminated"] + next_info["TimeLimit.truncated"],
+                new_episode_length,
+                episode_stats.returned_episode_lengths,
+            ),
+        )
+        new_episode_return = episode_stats.episode_returns + next_info["reward"]
         step_tuple = env.conditional_reset(step_tuple)
-        return step_tuple
+        return step_tuple, episode_stats
 
     return run
+
+
+@flax.struct.dataclass
+class EpisodeStatistics:
+    episode_returns: jnp.array
+    episode_lengths: jnp.array
+    returned_episode_returns: jnp.array
+    returned_episode_lengths: jnp.array
 
 
 def generate_frames(
@@ -183,14 +222,21 @@ def generate_frames(
     }
 
     def run_env(next_local_obs, next_info):
-        for frame_index in tqdm(range(updates), desc="Generating frames"):
+        episode_stats = EpisodeStatistics(
+            episode_returns=jnp.zeros(num_envs, dtype=jnp.float32),
+            episode_lengths=jnp.zeros(num_envs, dtype=jnp.int32),
+            returned_episode_returns=jnp.zeros(num_envs, dtype=jnp.float32),
+            returned_episode_lengths=jnp.zeros(num_envs, dtype=jnp.int32),
+        )
+        progress_bar = tqdm(range(updates), desc="Generating frames")
+        for frame_index in progress_bar:
             (
                 next_local_obs,
                 reward,
                 next_done,
                 truncated,
                 next_info,
-            ) = run(next_local_obs, next_info)
+            ), episode_stats = run(next_local_obs, next_info, episode_stats)
             for game_index in range(next_local_obs[0].shape[0]):
                 frames_per_game[game_index].append(
                     {
@@ -205,6 +251,20 @@ def generate_frames(
                         "cell_count": env.count_cells(next_local_obs[0][game_index]),
                     }
                 )
+            avg_episodic_return = np.mean(
+                jax.device_get(episode_stats.returned_episode_returns)
+            )
+            current_episodic_return = np.mean(
+                jax.device_get(episode_stats.episode_returns)
+            )
+
+            progress_bar.set_postfix(
+                {
+                    "avg_return": f"{avg_episodic_return:.2f}",
+                    "current_return": f"{current_episodic_return:.2f}",
+                },
+                refresh=True,
+            )
         return next_local_obs, next_info
 
     if no_train:

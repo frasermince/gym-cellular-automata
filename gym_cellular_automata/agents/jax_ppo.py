@@ -51,7 +51,7 @@ class Args:
     """if toggled, this experiment will be tracked with Weights and Biases"""
     wandb_project_name: str = "firefighter"
     """the wandb's project name"""
-    wandb_entity: str = None
+    wandb_entity: str = "unchart"
     """the entity (team) of wandb's project"""
     capture_video: bool = False
     """whether to capture videos of the agent performances (check out `videos` folder)"""
@@ -311,23 +311,23 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
             next_info,
         ) = step_tuple
 
-        new_episode_return = episode_stats.episode_returns + info["reward"]
+        new_episode_return = episode_stats.episode_returns + next_info["reward"]
         new_episode_length = episode_stats.episode_lengths + 1
         episode_stats = episode_stats.replace(
             episode_returns=(new_episode_return)
-            * (1 - info["terminated"])
-            * (1 - info["TimeLimit.truncated"]),
+            * (1 - next_info["terminated"])
+            * (1 - next_info["TimeLimit.truncated"]),
             episode_lengths=(new_episode_length)
-            * (1 - info["terminated"])
-            * (1 - info["TimeLimit.truncated"]),
+            * (1 - next_info["terminated"])
+            * (1 - next_info["TimeLimit.truncated"]),
             # only update the `returned_episode_returns` if the episode is done
             returned_episode_returns=jnp.where(
-                info["terminated"] + info["TimeLimit.truncated"],
+                next_info["terminated"] + next_info["TimeLimit.truncated"],
                 new_episode_return,
                 episode_stats.returned_episode_returns,
             ),
             returned_episode_lengths=jnp.where(
-                info["terminated"] + info["TimeLimit.truncated"],
+                next_info["terminated"] + next_info["TimeLimit.truncated"],
                 new_episode_length,
                 episode_stats.returned_episode_lengths,
             ),
