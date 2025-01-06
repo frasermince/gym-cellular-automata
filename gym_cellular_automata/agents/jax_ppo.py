@@ -646,8 +646,8 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
             # print("Sharding visualization flattened grid shape", flattened.shape)
             # jax.debug.visualize_array_sharding(flattened)
 
-            mesh = jax.make_mesh((4,), ("x"))
-            batch_sharding = NamedSharding(mesh, P("x"))
+            mesh = jax.make_mesh((4,), ("devices"))
+            batch_sharding = NamedSharding(mesh, P("devices"))
             b_grid_obs = jax.lax.with_sharding_constraint(b_grid_obs, batch_sharding)
             b_position_obs = jax.lax.with_sharding_constraint(
                 b_position_obs, batch_sharding
@@ -661,7 +661,9 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
 
             permutations = jax.lax.with_sharding_constraint(
                 permutations,
-                NamedSharding(mesh, P(None, None, "x")),  # Shard minibatch dimension
+                NamedSharding(
+                    mesh, P(None, None, "devices")
+                ),  # Shard minibatch dimension
             )
 
         def ppo_loss(params, x, a, logp, mb_advantages, mb_returns):
@@ -790,13 +792,13 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
     start_time = time.time()
     next_obs, report = env.reset()
     if len(jax.devices()) >= 4:
-        mesh = jax.make_mesh((4,), ("x"))
-        grid = jax.device_put(next_obs[0], NamedSharding(mesh, P("x")))
+        mesh = jax.make_mesh((4,), ("devices"))
+        grid = jax.device_put(next_obs[0], NamedSharding(mesh, P("devices")))
         context = next_obs[1]
         per_env_context = context["per_env_context"]
         for context_key in env.per_env_context_keys:
             per_env_context[context_key] = jax.device_put(
-                per_env_context[context_key], NamedSharding(mesh, P("x"))
+                per_env_context[context_key], NamedSharding(mesh, P("devices"))
             )
         next_obs = (grid, context)
 
@@ -909,14 +911,31 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
         )
         if len(jax.devices()) >= 4:
             # Gather stats from all devices
-            episode_stats = jax.tree_map(
-                lambda x: jax.device_get(jax.lax.all_gather(x, "devices").reshape(-1)),
-                episode_stats,
-            )
+            mesh = jax.make_mesh((4,), ("devices",))
+
+            # Create a mesh context for the all_gather operation
+            @jax.jit
+            def gather_stats(stats):
+                return jax.tree_map(
+                    lambda x: (
+                        jax.lax.all_gather(x, "devices").reshape(-1)
+                        if hasattr(x, "sharding") and x.sharding.spec == P("devices")
+                        else x
+                    ),
+                    stats,
+                )
+
+            with mesh:
+                sharded_stats = gather_stats(episode_stats)
+                total_finished = jax.device_get(episode_stats.amount_finished)
+        else:
+            # No sharding, use episode_stats directly
+            sharded_stats = episode_stats
+            total_finished = episode_stats.amount_finished
         avg_episodic_return = np.mean(
-            jax.device_get(episode_stats.returned_episode_returns)
+            jax.device_get(sharded_stats.returned_episode_returns)
         )
-        current_episodic_return = np.mean(jax.device_get(episode_stats.episode_returns))
+        current_episodic_return = np.mean(jax.device_get(sharded_stats.episode_returns))
 
         # Record rewards and metrics
         writer.add_scalar(
@@ -924,7 +943,7 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
         )
         writer.add_scalar(
             "charts/avg_episodic_length",
-            np.mean(jax.device_get(episode_stats.returned_episode_lengths)),
+            np.mean(jax.device_get(sharded_stats.returned_episode_lengths)),
             global_step,
         )
         writer.add_scalar(
@@ -952,7 +971,7 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
                 "SPS": sps,
                 "avg_return": f"{avg_episodic_return:.2f}",
                 "current_return": f"{current_episodic_return:.2f}",
-                "games_finished": int(jax.device_get(episode_stats.amount_finished)),
+                "games_finished": int(jax.device_get(total_finished)),
             },
             refresh=True,
         )
