@@ -150,6 +150,7 @@ def generate_frames(
     num_envs: int = 8,
     profile: bool = False,
     no_train: bool = False,
+    no_hidden: bool = False,
 ):
     def get_paths(key: str, i: int) -> str:
         paths = {}
@@ -190,7 +191,7 @@ def generate_frames(
             }
         return paths[key]
 
-    if no_train and name == "advanced_bulldozer":
+    if no_train and name == "advanced_bulldozer" and not no_hidden:
         # Generate and save altitude plot
         # Generate and save altitude plots
         altitude_plots = env.altitude_render()
@@ -368,39 +369,42 @@ def generate_frames(
     print(f"Generation completed in {end_time - start_time:.2f} seconds")
 
 
-def generate_gif_envs(
-    updates: int,
-    duration_frame: int,
-    save_gif: bool = True,
-    num_envs: int = 8,
-    profile=False,
-    size=256,
-    no_train=False,
-    speed_move=0.12,
-    speed_multiplier=1,
-):
+def generate_gif_envs(args):
     prototypes = ["helicopter", "bulldozer", "advanced_bulldozer"]
 
     proto_id = 2
     name = prototypes[proto_id]
     ProtoEnv = gymca.prototypes[proto_id]
+
+    speed_move = (
+        int(args.speed_move) if isinstance(args.speed_move, str) else args.speed_move
+    )
+    speed_multiplier = (
+        int(args.speed_multiplier)
+        if isinstance(args.speed_multiplier, str)
+        else args.speed_multiplier
+    )
+
     env = ProtoEnv(
-        nrows=size,
-        ncols=size,
-        num_envs=num_envs,
+        nrows=args.size,
+        ncols=args.size,
+        num_envs=args.num_envs,
         speed_move=speed_move * speed_multiplier,
         speed_act=0.03 * speed_multiplier,
+        use_hidden=not args.no_hidden,
+        middle_fire=True,
     )
 
     generate_frames(
         env,
         name,
-        updates=updates,
-        duration_between=duration_frame,
-        save_gif=save_gif,
-        num_envs=num_envs,
-        profile=profile,
-        no_train=no_train,
+        updates=args.steps,
+        duration_between=args.duration,
+        save_gif=not args.no_gif,
+        num_envs=args.num_envs,
+        profile=args.profile,
+        no_train=args.no_train,
+        no_hidden=args.no_hidden,
     )
 
 
@@ -465,22 +469,10 @@ parser.add_argument(
     default=256,
 )
 
+parser.add_argument("--no-hidden", action="store_true")
+
 if __name__ == "__main__":
     args = parser.parse_args()
 
     gif.options.matplotlib["dpi"] = 200
-    generate_gif_envs(
-        args.steps,
-        args.duration,
-        not args.no_gif,
-        args.num_envs,
-        args.profile,
-        args.size,
-        args.no_train,
-        int(args.speed_move) if isinstance(args.speed_move, str) else args.speed_move,
-        (
-            int(args.speed_multiplier)
-            if isinstance(args.speed_multiplier, str)
-            else args.speed_multiplier
-        ),
-    )
+    generate_gif_envs(args)

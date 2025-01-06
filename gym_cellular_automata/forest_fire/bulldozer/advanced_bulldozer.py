@@ -87,12 +87,24 @@ def init_density(row_count, column_count, num_envs):
     return den_matrix
 
 
+def init_density_same(row_count, column_count, num_envs):
+    """Creates a density matrix filled entirely with middle value (3)"""
+    den_matrix = np.full((num_envs, row_count, column_count), 3, dtype=int)
+    return den_matrix
+
+
+def init_vegetation_same(row_count, column_count, num_envs):
+    """Creates a vegetation matrix filled entirely with middle value (3)"""
+    veg_matrix = np.full((num_envs, row_count, column_count), 3, dtype=int)
+    return veg_matrix
+
+
+def init_altitude_same(row_count, column_count, num_envs):
+    altitude = np.full((num_envs, row_count, column_count), 0, dtype=int)
+    return altitude
+
+
 def init_altitude(row_count, column_count, num_envs):
-    base = np.tile(np.arange(column_count), (row_count, 1))
-    return np.tile(base, (num_envs, 1, 1))
-
-
-def init_altitude_2(row_count, column_count, num_envs):
     altitude = np.zeros((num_envs, row_count, column_count))
 
     for env in range(num_envs):
@@ -255,9 +267,13 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         t_any=0.001,
         p_tree=0.90,
         p_empty=0.10,
+        use_hidden: bool = True,
+        middle_fire: bool = False,
         **kwargs,
     ):
         super().__init__(nrows, ncols, **kwargs)
+        self.middle_fire = middle_fire
+        self.use_hidden = use_hidden
 
         self.shared_context_keys = {
             "winds",  # Shared wind patterns
@@ -316,12 +332,20 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
 
         winds = get_winds()  # Get numpy array
 
-        density = init_density(nrows, ncols, num_envs)  # Get numpy array
+        if use_hidden:
+            density = init_density(nrows, ncols, num_envs)
 
-        vegetation = init_vegetation(nrows, ncols, num_envs)  # Get numpy array
+            vegetation = init_vegetation(nrows, ncols, num_envs)
 
-        altitude = init_altitude_2(nrows, ncols, num_envs)  # Get numpy array
-        slope = get_slope(altitude, nrows, ncols, num_envs)  # Get numpy array
+            altitude = init_altitude(nrows, ncols, num_envs)
+        else:
+            density = init_density_same(nrows, ncols, num_envs)
+
+            vegetation = init_vegetation_same(nrows, ncols, num_envs)
+
+            altitude = init_altitude_same(nrows, ncols, num_envs)
+
+        slope = get_slope(altitude, nrows, ncols, num_envs)
 
         self._winds = jnp.array(winds)  # Convert to JAX array
         self._wind = self._winds[0]
@@ -595,11 +619,19 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         # Fire Position
         # Around the lower left quadrant for each env
         if self._pos_fire is None:
-            self._pos_fire = []
-            for _ in range(self.num_envs):
-                r = (3 * self.nrows // 4) + self._noise(self.nrows)
-                c = (1 * self.ncols // 4) + self._noise(self.ncols)
-                self._pos_fire.append((r, c))
+            if self.middle_fire:
+                self._pos_fire = []
+                for _ in range(self.num_envs):
+                    r = (self.nrows // 2) + self._noise(self.nrows)
+                    c = (self.ncols // 2) + self._noise(self.ncols)
+                    self._pos_fire.append((r, c))
+
+            else:
+                self._pos_fire = []
+                for _ in range(self.num_envs):
+                    r = (3 * self.nrows // 4) + self._noise(self.nrows)
+                    c = (1 * self.ncols // 4) + self._noise(self.ncols)
+                    self._pos_fire.append((r, c))
 
         for env in range(self.num_envs):
             r, c = self._pos_fire[env]
@@ -627,7 +659,10 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
 
         # Per-environment context parameters
         per_env_context = {
-            "wind_index": jnp.zeros(self.num_envs, dtype=jnp.int32),
+            "wind_index": jnp.array(
+                self.np_random.integers(0, 8, size=self.num_envs) if self.use_hidden else jnp.zeros(self.num_envs),
+                dtype=jnp.int32
+            ),
             "density": self._density,
             "vegetation": self._vegitation,
             "altitude": self._altitude,
