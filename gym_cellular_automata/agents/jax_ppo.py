@@ -13,6 +13,7 @@ import numpy as np
 import optax
 from tqdm import tqdm
 import pickle
+import orbax.checkpoint
 
 from jax.sharding import PartitionSpec as P, NamedSharding
 from flax.linen.initializers import constant, orthogonal
@@ -256,6 +257,11 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
     args.minibatch_size = int(args.batch_size // args.num_minibatches)
     args.num_iterations = args.total_timesteps // args.batch_size
     run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
+    orbax_checkpointer = orbax.checkpoint.PyTreeCheckpointer()
+    options = orbax.checkpoint.CheckpointManagerOptions(max_to_keep=2, create=True)
+    checkpoint_manager = orbax.checkpoint.CheckpointManager(
+        "/tmp/flax_ckpt/orbax/managed", orbax_checkpointer, options
+    )
     if args.track:
         import wandb
 
@@ -975,11 +981,9 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
             },
             refresh=True,
         )
-        if iteration % 500 == 0:
-            # Save model parameters
-            params = jax.device_get(agent_state.params)
-            with open(f"runs/{run_name}_params_{iteration}.pkl", "wb") as f:
-                pickle.dump(params, f)
+        if iteration % 200 == 0 or iteration == 1:
+            # Save model parameters using checkpoint manager
+            checkpoint_manager.save(iteration, agent_state)
 
     # Save grid observations to JSON file
     grid_obs = jax.device_get(storage.grid_obs)  # Get array from device
@@ -990,3 +994,112 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
     # envs.close()
     writer.close()
     return grid_obs, agent_state, run_name
+
+
+def load_actor(params_path: str, env):
+    """
+    Loads saved parameters and returns a function that can be used for inference.
+
+    Args:
+        params_path: Path to the saved parameters
+
+    Returns:
+        function: A function that takes (grid_obs, position_obs) and returns actions
+    """
+    # Initialize models
+    network = Network()
+    actor = Actor(action_dims=env.action_space.nvec[0])
+
+    critic = Critic()
+
+    # Load parameters
+    orbax_checkpointer = orbax.checkpoint.PyTreeCheckpointer()
+    options = orbax.checkpoint.CheckpointManagerOptions(max_to_keep=2, create=True)
+    checkpoint_manager = orbax.checkpoint.CheckpointManager(
+        params_path,  # This should be the base directory, e.g. "/tmp/flax_ckpt/orbax/managed"
+        orbax_checkpointer,
+        options,
+    )
+
+    # Create initial state with proper network initialization
+    grid_sample, context = env.observation_space.sample()
+    network_key, actor_key, critic_key = jax.random.split(jax.random.PRNGKey(0), 3)
+
+    network_params = network.init(
+        network_key, grid_sample, jnp.array(context["position"])
+    )
+    actor_params = actor.init(
+        actor_key,
+        network.apply(network_params, grid_sample, jnp.array(context["position"])),
+    )
+    critic_params = critic.init(
+        critic_key,
+        network.apply(network_params, grid_sample, jnp.array(context["position"])),
+    )
+    agent_state = TrainState.create(
+        apply_fn=None,
+        params=flax.core.freeze(
+            {
+                "network_params": network_params,
+                "actor_params": actor_params,
+                "critic_params": critic_params,
+            }
+        ),
+        tx=optax.chain(
+            optax.clip_by_global_norm(0.5),
+            optax.inject_hyperparams(optax.adam)(
+                learning_rate=3e-5,
+                eps=1e-5,
+            ),
+        ),
+    )
+
+    # Get latest checkpoint
+    step = checkpoint_manager.latest_step()
+    if step is None:
+        raise ValueError(f"No checkpoints found in {params_path}")
+
+    # Create restore args
+    # restore_args = {
+    #     "item": {
+    #         "params": {
+    #             "network_params": orbax.checkpoint.RestoreArgs(dtype=jnp.float32),
+    #             "actor_params": orbax.checkpoint.RestoreArgs(dtype=jnp.float32),
+    #             "critic_params": orbax.checkpoint.RestoreArgs(dtype=jnp.float32),
+    #         },
+    #         "tx": orbax.checkpoint.RestoreArgs(),
+    #         "step": orbax.checkpoint.RestoreArgs(dtype=jnp.int32),
+    #     }
+    # }
+
+    # Restore the checkpoint
+    restored_state = checkpoint_manager.restore(step)
+
+    @jax.jit
+    def get_action(grid_obs, position_obs):
+        """
+        Get action for a single observation.
+
+        Args:
+            grid_obs: Grid observation
+            position_obs: Position observation
+
+        Returns:
+            actions: Selected actions
+        """
+        # Get hidden features from network
+        hidden = network.apply(
+            restored_state["params"]["network_params"],
+            grid_obs,
+            position_obs,
+        )
+
+        # Get action logits
+        action_logits = actor.apply(restored_state["params"]["actor_params"], hidden)
+
+        # Sample action deterministically by taking argmax
+        actions = jnp.argmax(action_logits, axis=-1)
+
+        return actions
+
+    return get_action

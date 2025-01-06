@@ -17,8 +17,17 @@ import flax
 import pickle
 from jax.profiler import trace
 
+import optax
+
 import gym_cellular_automata as gymca
-from gym_cellular_automata.agents.jax_ppo import run_rollout_loop
+from gym_cellular_automata.agents.jax_ppo import (
+    run_rollout_loop,
+    load_actor,
+    Network,
+    Actor,
+    Critic,
+    TrainState,
+)
 from gym_cellular_automata.forest_fire.bulldozer.utils.render import (
     render,
     plot_grid_attribute,
@@ -86,7 +95,7 @@ def make_frame(plot):
     return plot
 
 
-def get_run(env: Env, save_gif: bool):
+def get_run(env: Env, actor):
 
     warnings.filterwarnings("ignore", category=MatplotlibDeprecationWarning)
 
@@ -94,7 +103,7 @@ def get_run(env: Env, save_gif: bool):
     def run(obs, info, episode_stats):
         # if save_gif:
         #     env.render()
-        action = env.action_space.sample()
+        action = actor(obs[0], obs[1]["position"])
         step_tuple = env.stateless_step(action, obs, info)
         (
             next_obs,
@@ -151,6 +160,7 @@ def generate_frames(
     profile: bool = False,
     no_train: bool = False,
     no_hidden: bool = False,
+    actor=None,
 ):
     def get_paths(key: str, i: int) -> str:
         paths = {}
@@ -213,8 +223,7 @@ def generate_frames(
     import time
 
     start_time = time.time()
-
-    run = get_run(env, save_gif)
+    run = get_run(env, actor)
     frames_per_game = [[] for _ in range(num_envs)]
     next_obs, report = env.reset()
     next_info = {
@@ -395,6 +404,11 @@ def generate_gif_envs(args):
         middle_fire=True,
     )
 
+    if args.params:
+        actor = load_actor(args.params, env)
+    else:
+        actor = lambda x, y: env.action_space.sample()
+
     generate_frames(
         env,
         name,
@@ -405,6 +419,7 @@ def generate_gif_envs(args):
         profile=args.profile,
         no_train=args.no_train,
         no_hidden=args.no_hidden,
+        actor=actor,
     )
 
 
@@ -470,6 +485,7 @@ parser.add_argument(
 )
 
 parser.add_argument("--no-hidden", action="store_true")
+parser.add_argument("--params")
 
 if __name__ == "__main__":
     args = parser.parse_args()
