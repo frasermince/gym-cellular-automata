@@ -975,6 +975,11 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
             },
             refresh=True,
         )
+        if iteration % 500 == 0:
+            # Save model parameters
+            params = jax.device_get(agent_state.params)
+            with open(f"runs/{run_name}_params_{iteration}.pkl", "wb") as f:
+                pickle.dump(params, f)
 
     # Save grid observations to JSON file
     grid_obs = jax.device_get(storage.grid_obs)  # Get array from device
