@@ -907,6 +907,12 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
             storage,
             key,
         )
+        if len(jax.devices()) >= 4:
+            # Gather stats from all devices
+            episode_stats = jax.tree_map(
+                lambda x: jax.device_get(jax.lax.all_gather(x, "devices").reshape(-1)),
+                episode_stats,
+            )
         avg_episodic_return = np.mean(
             jax.device_get(episode_stats.returned_episode_returns)
         )
