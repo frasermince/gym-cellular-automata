@@ -247,6 +247,7 @@ class EpisodeStatistics:
     episode_lengths: jnp.array
     returned_episode_returns: jnp.array
     returned_episode_lengths: jnp.array
+    amount_finished: jnp.array = 0
 
 
 def run_rollout_loop(env, num_iterations, num_envs=8):
@@ -314,6 +315,8 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
         new_episode_return = episode_stats.episode_returns + next_info["reward"]
         new_episode_length = episode_stats.episode_lengths + 1
         episode_stats = episode_stats.replace(
+            amount_finished=episode_stats.amount_finished
+            + jnp.sum(next_info["terminated"]),
             episode_returns=(new_episode_return)
             * (1 - next_info["terminated"])
             * (1 - next_info["TimeLimit.truncated"]),
@@ -332,6 +335,11 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
                 episode_stats.returned_episode_lengths,
             ),
         )
+        # if jnp.any(next_info["terminated"]):
+        #     import pdb
+
+        #     pdb.set_trace()
+
         (
             next_obs,
             reward,
@@ -339,6 +347,12 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
             truncated,
             next_info,
         ) = env.conditional_reset(step_tuple)
+        # episode_stats = episode_stats.replace(
+        #     episode_returns=(new_episode_return)
+        #     * (1 - next_info["terminated"])
+        #     * (1 - next_info["TimeLimit.truncated"])
+        # )
+
         return episode_stats, (
             next_obs,
             reward,
@@ -856,7 +870,12 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
     progress_bar = tqdm(
         range(1, num_iterations + 1),
         desc="Training",
-        postfix={"SPS": "0", "avg_return": "0.0", "current_return": "0.0"},
+        postfix={
+            "SPS": "0",
+            "avg_return": "0.0",
+            "current_return": "0.0",
+            "games_finished": 0,
+        },
     )
     for iteration in progress_bar:
         # if len(jax.devices()) >= 4:
@@ -927,6 +946,7 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
                 "SPS": sps,
                 "avg_return": f"{avg_episodic_return:.2f}",
                 "current_return": f"{current_episodic_return:.2f}",
+                "games_finished": int(jax.device_get(episode_stats.amount_finished)),
             },
             refresh=True,
         )
