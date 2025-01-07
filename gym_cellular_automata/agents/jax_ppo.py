@@ -257,10 +257,14 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
     args.minibatch_size = int(args.batch_size // args.num_minibatches)
     args.num_iterations = args.total_timesteps // args.batch_size
     run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
-    orbax_checkpointer = orbax.checkpoint.PyTreeCheckpointer()
-    options = orbax.checkpoint.CheckpointManagerOptions(max_to_keep=2, create=True)
-    checkpoint_manager = orbax.checkpoint.CheckpointManager(
-        "/tmp/flax_ckpt/orbax/managed", orbax_checkpointer, options
+    checkpoint_options = orbax.checkpoint.CheckpointManagerOptions(
+        max_to_keep=2, create=True
+    )
+    registry = orbax.checkpoint.handlers.DefaultCheckpointHandlerRegistry()
+    registry.add(
+        "default",
+        orbax.checkpoint.args.StandardSave,
+        orbax.checkpoint.StandardCheckpointHandler,
     )
     if args.track:
         import wandb
@@ -885,105 +889,118 @@ def run_rollout_loop(env, num_iterations, num_envs=8):
             "games_finished": 0,
         },
     )
-    for iteration in progress_bar:
-        # if len(jax.devices()) >= 4:
-        #     flattened = next_obs[0].reshape(-1, next_obs[0].shape[-1])
-        #     jax.debug.visualize_array_sharding(flattened)
-        iteration_time_start = time.time()
-        (
-            agent_state,
-            episode_stats,
-            next_obs,
-            next_done,
-            next_info,
-            storage,
-            key,
-            global_step,
-        ) = rollout(
-            agent_state,
-            episode_stats,
-            next_obs,
-            next_done,
-            next_info,
-            storage,
-            key,
-            global_step,
-        )
-        storage = compute_gae(agent_state, next_obs, next_done, storage)
-        agent_state, loss, pg_loss, v_loss, entropy_loss, approx_kl, key = update_ppo(
-            agent_state,
-            storage,
-            key,
-        )
-        if len(jax.devices()) >= 4:
-            # Gather stats from all devices
-            mesh = jax.make_mesh((4,), ("devices",))
-
-            # Create a mesh context for the all_gather operation
-            @jax.jit
-            def gather_stats(stats):
-                return jax.tree_map(
-                    lambda x: (
-                        jax.lax.all_gather(x, "devices").reshape(-1)
-                        if hasattr(x, "sharding") and x.sharding.spec == P("devices")
-                        else x
-                    ),
-                    stats,
+    with orbax.checkpoint.CheckpointManager(
+        "/tmp/flax_ckpt/orbax/managed",
+        options=checkpoint_options,
+        handler_registry=registry,
+    ) as checkpoint_manager:
+        for iteration in progress_bar:
+            # if len(jax.devices()) >= 4:
+            #     flattened = next_obs[0].reshape(-1, next_obs[0].shape[-1])
+            #     jax.debug.visualize_array_sharding(flattened)
+            iteration_time_start = time.time()
+            (
+                agent_state,
+                episode_stats,
+                next_obs,
+                next_done,
+                next_info,
+                storage,
+                key,
+                global_step,
+            ) = rollout(
+                agent_state,
+                episode_stats,
+                next_obs,
+                next_done,
+                next_info,
+                storage,
+                key,
+                global_step,
+            )
+            storage = compute_gae(agent_state, next_obs, next_done, storage)
+            agent_state, loss, pg_loss, v_loss, entropy_loss, approx_kl, key = (
+                update_ppo(
+                    agent_state,
+                    storage,
+                    key,
                 )
+            )
+            if len(jax.devices()) >= 4:
+                # Gather stats from all devices
+                mesh = jax.make_mesh((4,), ("devices",))
 
-            with mesh:
-                sharded_stats = gather_stats(episode_stats)
-                total_finished = jax.device_get(episode_stats.amount_finished)
-        else:
-            # No sharding, use episode_stats directly
-            sharded_stats = episode_stats
-            total_finished = episode_stats.amount_finished
-        avg_episodic_return = np.mean(
-            jax.device_get(sharded_stats.returned_episode_returns)
-        )
-        current_episodic_return = np.mean(jax.device_get(sharded_stats.episode_returns))
+                # Create a mesh context for the all_gather operation
+                @jax.jit
+                def gather_stats(stats):
+                    return jax.tree_map(
+                        lambda x: (
+                            jax.lax.all_gather(x, "devices").reshape(-1)
+                            if hasattr(x, "sharding")
+                            and x.sharding.spec == P("devices")
+                            else x
+                        ),
+                        stats,
+                    )
 
-        # Record rewards and metrics
-        writer.add_scalar(
-            "charts/avg_episodic_return", avg_episodic_return, global_step
-        )
-        writer.add_scalar(
-            "charts/avg_episodic_length",
-            np.mean(jax.device_get(sharded_stats.returned_episode_lengths)),
-            global_step,
-        )
-        writer.add_scalar(
-            "charts/learning_rate",
-            agent_state.opt_state[1].hyperparams["learning_rate"].item(),
-            global_step,
-        )
-        writer.add_scalar("losses/value_loss", v_loss.item(), global_step)
-        writer.add_scalar("losses/policy_loss", pg_loss.item(), global_step)
-        writer.add_scalar("losses/entropy", entropy_loss.item(), global_step)
-        writer.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
-        writer.add_scalar("losses/loss", loss.item(), global_step)
+                with mesh:
+                    sharded_stats = gather_stats(episode_stats)
+                    total_finished = jax.device_get(episode_stats.amount_finished)
+            else:
+                # No sharding, use episode_stats directly
+                sharded_stats = episode_stats
+                total_finished = episode_stats.amount_finished
+            avg_episodic_return = np.mean(
+                jax.device_get(sharded_stats.returned_episode_returns)
+            )
+            current_episodic_return = np.mean(
+                jax.device_get(sharded_stats.episode_returns)
+            )
 
-        sps = int(global_step / (time.time() - start_time))
-        writer.add_scalar("charts/SPS", sps, global_step)
-        writer.add_scalar(
-            "charts/SPS_update",
-            int(num_envs * args.num_steps / (time.time() - iteration_time_start)),
-            global_step,
-        )
+            # Record rewards and metrics
+            writer.add_scalar(
+                "charts/avg_episodic_return", avg_episodic_return, global_step
+            )
+            writer.add_scalar(
+                "charts/avg_episodic_length",
+                np.mean(jax.device_get(sharded_stats.returned_episode_lengths)),
+                global_step,
+            )
+            writer.add_scalar(
+                "charts/learning_rate",
+                agent_state.opt_state[1].hyperparams["learning_rate"].item(),
+                global_step,
+            )
+            writer.add_scalar("losses/value_loss", v_loss.item(), global_step)
+            writer.add_scalar("losses/policy_loss", pg_loss.item(), global_step)
+            writer.add_scalar("losses/entropy", entropy_loss.item(), global_step)
+            writer.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
+            writer.add_scalar("losses/loss", loss.item(), global_step)
 
-        # Update progress bar
-        progress_bar.set_postfix(
-            {
-                "SPS": sps,
-                "avg_return": f"{avg_episodic_return:.2f}",
-                "current_return": f"{current_episodic_return:.2f}",
-                "games_finished": int(jax.device_get(total_finished)),
-            },
-            refresh=True,
-        )
-        if iteration % 200 == 0 or iteration == 1:
-            # Save model parameters using checkpoint manager
-            checkpoint_manager.save(iteration, agent_state)
+            sps = int(global_step / (time.time() - start_time))
+            writer.add_scalar("charts/SPS", sps, global_step)
+            writer.add_scalar(
+                "charts/SPS_update",
+                int(num_envs * args.num_steps / (time.time() - iteration_time_start)),
+                global_step,
+            )
+
+            # Update progress bar
+            progress_bar.set_postfix(
+                {
+                    "SPS": sps,
+                    "avg_return": f"{avg_episodic_return:.2f}",
+                    "current_return": f"{current_episodic_return:.2f}",
+                    "games_finished": int(jax.device_get(total_finished)),
+                },
+                refresh=True,
+            )
+            if iteration % 200 == 0 or iteration == 1:
+                # Save model parameters using checkpoint manager
+                checkpoint_manager.save(
+                    iteration,
+                    args=orbax.checkpoint.args.StandardSave(agent_state.params),
+                )
 
     # Save grid observations to JSON file
     grid_obs = jax.device_get(storage.grid_obs)  # Get array from device
@@ -1013,13 +1030,13 @@ def load_actor(params_path: str, env):
     critic = Critic()
 
     # Load parameters
-    orbax_checkpointer = orbax.checkpoint.PyTreeCheckpointer()
-    options = orbax.checkpoint.CheckpointManagerOptions(max_to_keep=2, create=True)
-    checkpoint_manager = orbax.checkpoint.CheckpointManager(
-        params_path,  # This should be the base directory, e.g. "/tmp/flax_ckpt/orbax/managed"
-        orbax_checkpointer,
-        options,
-    )
+    # orbax_checkpointer = orbax.checkpoint.PyTreeCheckpointer()
+    # options = orbax.checkpoint.CheckpointManagerOptions(max_to_keep=2, create=True)
+    # checkpoint_manager = orbax.checkpoint.CheckpointManager(
+    #     params_path,  # This should be the base directory, e.g. "/tmp/flax_ckpt/orbax/managed"
+    #     orbax_checkpointer,
+    #     options,
+    # )
 
     # Create initial state with proper network initialization
     grid_sample, context = env.observation_space.sample()
@@ -1036,44 +1053,48 @@ def load_actor(params_path: str, env):
         critic_key,
         network.apply(network_params, grid_sample, jnp.array(context["position"])),
     )
-    agent_state = TrainState.create(
-        apply_fn=None,
-        params=flax.core.freeze(
-            {
-                "network_params": network_params,
-                "actor_params": actor_params,
-                "critic_params": critic_params,
-            }
-        ),
-        tx=optax.chain(
-            optax.clip_by_global_norm(0.5),
-            optax.inject_hyperparams(optax.adam)(
-                learning_rate=3e-5,
-                eps=1e-5,
-            ),
-        ),
+    agent_state = {
+        "network_params": network_params,
+        "actor_params": actor_params,
+        "critic_params": critic_params,
+    }
+    options = orbax.checkpoint.CheckpointManagerOptions(max_to_keep=2, create=True)
+
+    # Create registry for standard PyTree handling
+    registry = orbax.checkpoint.handlers.DefaultCheckpointHandlerRegistry()
+    registry.add(
+        "default",
+        orbax.checkpoint.args.StandardRestore,
+        orbax.checkpoint.StandardCheckpointHandler,
+    )
+    abstract_state = jax.tree_util.tree_map(
+        orbax.checkpoint.utils.to_shape_dtype_struct, agent_state
     )
 
+    mesh = jax.make_mesh((1,), ("devices",))
+    single_device_sharding = NamedSharding(mesh, P(None))
+
+    def set_sharding(x: jax.ShapeDtypeStruct) -> jax.ShapeDtypeStruct:
+        if isinstance(x, jax.ShapeDtypeStruct):
+            x.sharding = single_device_sharding
+        return x
+
+    abstract_state_with_sharding = jax.tree_util.tree_map(set_sharding, agent_state)
+
     # Get latest checkpoint
-    step = checkpoint_manager.latest_step()
-    if step is None:
-        raise ValueError(f"No checkpoints found in {params_path}")
+    with orbax.checkpoint.CheckpointManager(
+        params_path,
+        options=options,
+        handler_registry=registry,
+    ) as manager:
+        step = manager.latest_step()
+        if step is None:
+            raise ValueError(f"No checkpoints found in {params_path}")
 
-    # Create restore args
-    # restore_args = {
-    #     "item": {
-    #         "params": {
-    #             "network_params": orbax.checkpoint.RestoreArgs(dtype=jnp.float32),
-    #             "actor_params": orbax.checkpoint.RestoreArgs(dtype=jnp.float32),
-    #             "critic_params": orbax.checkpoint.RestoreArgs(dtype=jnp.float32),
-    #         },
-    #         "tx": orbax.checkpoint.RestoreArgs(),
-    #         "step": orbax.checkpoint.RestoreArgs(dtype=jnp.int32),
-    #     }
-    # }
-
-    # Restore the checkpoint
-    restored_state = checkpoint_manager.restore(step)
+        restored_state = manager.restore(
+            step,
+            args=orbax.checkpoint.args.StandardRestore(abstract_state_with_sharding),
+        )
 
     @jax.jit
     def get_action(grid_obs, position_obs):
@@ -1089,13 +1110,13 @@ def load_actor(params_path: str, env):
         """
         # Get hidden features from network
         hidden = network.apply(
-            restored_state["params"]["network_params"],
+            restored_state["network_params"],
             grid_obs,
             position_obs,
         )
 
         # Get action logits
-        action_logits = actor.apply(restored_state["params"]["actor_params"], hidden)
+        action_logits = actor.apply(restored_state["actor_params"], hidden)
 
         # Sample action deterministically by taking argmax
         actions = jnp.argmax(action_logits, axis=-1)
