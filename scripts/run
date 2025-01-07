@@ -28,7 +28,7 @@ from gym_cellular_automata.agents.jax_ppo import (
     Critic,
     TrainState,
 )
-from gym_cellular_automata.forest_fire.bulldozer.utils.render import (
+from gym_cellular_automata.forest_fire.bulldozer.utils.advanced_bulldozer_render import (
     render,
     plot_grid_attribute,
 )

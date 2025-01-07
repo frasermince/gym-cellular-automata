@@ -37,7 +37,7 @@ class RepeatCA(Operator):
         time_taken = time_action + time_state
 
         accu_time += time_taken
-        me, repeats = math.modf(accu_time)
+        accu_time, repeats = math.modf(accu_time)
 
         for repeat in range(int(repeats)):
             grid, ca_params = self.ca(grid, action, ca_params)

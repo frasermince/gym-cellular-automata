@@ -9,9 +9,9 @@ from gymnasium import spaces
 from gym_cellular_automata._config import TYPE_BOX, TYPE_INT
 from gym_cellular_automata.ca_env import CAEnv
 from gym_cellular_automata.forest_fire.operators import (
-    Modify,
-    Move,
-    MoveModify,
+    ModifyJax,
+    MoveJax,
+    MoveModifyJax,
     RepeatCAJax,
     PartiallyObservableForestFire,
     PartiallyObservableForestFireJax,
@@ -19,7 +19,7 @@ from gym_cellular_automata.forest_fire.operators import (
 from gym_cellular_automata.grid_space import GridSpace
 from gym_cellular_automata.operator import Operator
 
-from .utils.render import render, plot_grid_attribute
+from .utils.advanced_bulldozer_render import render, plot_grid_attribute
 
 import math
 from functools import partial
@@ -427,11 +427,13 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             self._empty, self._tree, self._fire, **self.ca_space
         )
 
-        self.move = Move(self._action_sets, **self.move_space)
-        self.modify = Modify(self._effects, **self.modify_space)
+        self.move = MoveJax(self._action_sets, **self.move_space)
+        self.modify = ModifyJax(self._effects, **self.modify_space)
 
         # Composite Operators
-        self.move_modify = MoveModify(self.move, self.modify, **self.move_modify_space)
+        self.move_modify = MoveModifyJax(
+            self.move, self.modify, **self.move_modify_space
+        )
         self.repeater = RepeatCAJax(
             self.ca, self.time_per_action, self.time_per_state, **self.repeater_space
         )

@@ -38,8 +38,7 @@ class WindyForestFire(Operator):
         if self.context_space is None:
             self.context_space = spaces.Box(0.0, 1.0, shape=(3, 3), dtype=TYPE_BOX)
 
-    def update(self, grid, action, context):
-        wind = context["wind"]
+    def update(self, grid, action, wind):
         # Sample which FIREs fail to propagate this update
         fail_to_propagate = self._get_failed_propagations_mask(wind)
 
@@ -49,7 +48,7 @@ class WindyForestFire(Operator):
 
         new_grid = self._translate_analogic_to_discrete(grid_signal, self.breaks)
 
-        return new_grid, context
+        return new_grid, wind
 
     def _get_failed_propagations_mask(self, wind):
         """

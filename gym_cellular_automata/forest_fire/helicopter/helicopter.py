@@ -18,11 +18,7 @@ from .utils.render import render
 
 
 class ForestFireHelicopterEnv(CAEnv):
-    metadata = {
-        "render_modes": ["human", "rgb_array"],
-        "render_mode": "rgb_array",
-        "render_fps": 30,
-    }
+    metadata = {"render_modes": ["human"]}
 
     @property
     def MDP(self):
@@ -119,12 +115,7 @@ class ForestFireHelicopterEnv(CAEnv):
     # step, reset & seed methods inherited from parent class
 
     def render(self, mode="human"):
-        result = render(self)
-        return result
-
-    @property
-    def render_mode(self):
-        return self.metadata["render_mode"]
+        return render(self)
 
     def _award(self):
         ncells = self.nrows * self.ncols

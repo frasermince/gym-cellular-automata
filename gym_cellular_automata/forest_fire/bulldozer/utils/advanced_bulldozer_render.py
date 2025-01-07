@@ -64,29 +64,81 @@ filterwarnings("ignore", message="Glyph 108")
 filterwarnings("ignore", message="Glyph 112")
 
 
-def render(env):
-    NROWS = env.nrows
-    NCOLS = env.ncols
+def plot_grid_attribute(grid, attribute_name):
+    """Renders a visualization of the given grid attribute (altitude, density, etc).
 
-    EMPTY = env._empty
-    TREE = env._tree
-    FIRE = env._fire
+    Args:
+        grid: MxN numpy array containing attribute values
+        attribute_name: String name of the attribute being plotted (e.g. "Altitude", "Density")
+    """
+    # Get min and max values
+    min_val = np.min(grid)
+    max_val = np.max(grid)
+
+    # Create 5 evenly spaced ranges
+    num_ranges = 5
+    range_size = (max_val - min_val) / num_ranges
+    values = [min_val + i * range_size for i in range(num_ranges + 1)]
+
+    # Define colors for different ranges - from light to dark
+    colors = [
+        "#FFF5F0",  # Lightest - almost white
+        "#FEE0D2",
+        "#FCBBA1",
+        "#FC9272",
+        "#FB6A4A",
+        "#CB181D",  # Darkest red
+    ]
+
+    NORM, CMAP = get_norm_cmap(values, colors)
+
+    def main():
+        plt.style.use(FIGSTYLE)
+        # Create figure and axis
+        fig, ax = plt.subplots()
+
+        # Plot grid
+        ax.imshow(grid, interpolation="none", cmap=CMAP, norm=NORM)
+
+        # Add colorbar with actual values
+        cbar = plt.colorbar(
+            ax.images[0], ax=ax, label=attribute_name, orientation="horizontal"
+        )
+
+        # Format colorbar ticks to show actual values
+        cbar.set_ticks(values)
+        cbar.set_ticklabels([f"{val:.1f}" for val in values])
+
+        # Add title
+        ax.set_title(f"Terrain {attribute_name} Map", pad=10, fontsize=12)
+
+        # Clear axes
+        clear_ax(ax)
+
+        return plt
+
+    return main()
+
+
+def render(
+    empty, tree, fire, title, grid, time, pos, cell_count, pos_fire, wind_index=None
+):
+    EMPTY = empty
+    TREE = tree
+    FIRE = fire
 
     # Assumes that cells values are in ascending order and paired with its colors
     COLORS = [COLOR_EMPTY, COLOR_TREE, COLOR_FIRE]
     CELLS = [EMPTY, TREE, FIRE]
     NORM, CMAP = get_norm_cmap(CELLS, COLORS)
 
-    grid = env.grid
-    ca_params, pos, time = env.context
-
     local_grid = moore_n(N_LOCAL, pos, grid, EMPTY)
-    pos_fseed = env._pos_fire
+    pos_fseed = pos_fire
 
     # Why two titles?
     # The env was registered (benchmark) or
     # The env was directly created (prototype)
-    TITLE = env.spec.id if env.spec is not None else env.title
+    TITLE = title
 
     def main():
         plt.style.use(FIGSTYLE)
@@ -98,7 +150,7 @@ def render(env):
             fontsize=TITLE_SIZE,
             **TITLE_POS,
             color="0.6",
-            ha=TITLE_ALIGN
+            ha=TITLE_ALIGN,
         )
 
         ax_lgrid = plt.subplot2grid(fig_shape, (0, 0), colspan=8, rowspan=10)
@@ -112,11 +164,11 @@ def render(env):
 
         plot_gauge(ax_gauge, time)
 
-        d = env.count_cells()
+        d = cell_count
         counts = d[EMPTY], d[TREE], d[FIRE]
         plot_counts(ax_counts, *counts)
 
-        return plt.gcf()
+        return fig
 
     def plot_local(ax, grid):
         nrows, ncols = grid.shape
@@ -210,6 +262,40 @@ def render(env):
 
         # Third Level Bars
         ax.bar(height=lv3y, color=lv3c, bottom=lv3b, **commons)
+
+        # Add wind direction arrow and symbol
+        if wind_index is not None:
+            arrow_x = 1.8
+            arrow_y = counts_total * 0.2
+
+            # Convert wind index to angle (0=North, clockwise)
+            angle = (-45 * wind_index) + 90
+
+            ax.set_xlim([0, 3])  # Adjust based on your desired range
+            ax.set_ylim([0, counts_total])
+
+            ax.quiver(
+                arrow_x,
+                arrow_y,
+                np.cos(np.radians(angle)),
+                np.sin(np.radians(angle)),
+                scale=2,  # Increase this value to make arrow shorter
+                scale_units="x",
+                color="gray",
+                alpha=0.5,
+            )
+
+            # Add wind symbol
+            WIND_SYMBOL = "\U0001F32C"  # Unicode wind face symbol
+            ax.text(
+                arrow_x - 0.15,  # Slightly left of arrow
+                arrow_y - counts_total * 0.43,
+                WIND_SYMBOL,
+                font=EMOJIFONT,
+                size=28,
+                color="gray",
+                alpha=0.5,
+            )
 
         # Bar Symbols Settings
         ax.set_xticks(np.arange(2))
