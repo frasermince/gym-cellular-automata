@@ -223,8 +223,12 @@ def calc_pw(theta):
     return np.exp(c_1 * V) * ft, ft
 
 
-def get_winds():
+def get_winds(use_hidden):
     winds = []
+    if use_hidden:
+        thetas = wind_thetas
+    else:
+        thetas = [wind_thetas[0] for _ in range(len(wind_thetas))]
     for thetas in wind_thetas:
         wind_matrix = np.zeros((3, 3))
         theta_array = np.array(thetas)
@@ -330,7 +334,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
 
         # Env Behavior Parameters
 
-        winds = get_winds()  # Get numpy array
+        winds = get_winds(use_hidden)  # Get numpy array
 
         if use_hidden:
             density = init_density(nrows, ncols, num_envs)
@@ -660,8 +664,12 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         # Per-environment context parameters
         per_env_context = {
             "wind_index": jnp.array(
-                self.np_random.integers(0, 8, size=self.num_envs) if self.use_hidden else jnp.zeros(self.num_envs),
-                dtype=jnp.int32
+                (
+                    self.np_random.integers(0, 8, size=self.num_envs)
+                    if self.use_hidden
+                    else jnp.zeros(self.num_envs)
+                ),
+                dtype=jnp.int32,
             ),
             "density": self._density,
             "vegetation": self._vegitation,
