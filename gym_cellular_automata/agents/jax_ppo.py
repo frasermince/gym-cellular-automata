@@ -252,7 +252,31 @@ class EpisodeStatistics:
     amount_finished: jnp.array = 0
 
 
-def run_rollout_loop(env, num_iterations, num_envs=8, use_gif=False):
+def build_storage_return(storage, env):
+    # Save grid observations to JSON file
+    grid_obs = jax.device_get(storage.grid_obs).transpose(
+        1, 0, 2, 3
+    )  # Get array from device and swap first two dims
+    position_obs = jax.device_get(storage.position_obs).transpose(
+        1, 0, 2
+    )  # Get array from device and swap first two dims
+    contexts = {}
+    for context_key in env.per_env_context_keys:
+        contexts[context_key] = jax.device_get(storage.contexts[context_key]).transpose(
+            1, 0, *range(2, storage.contexts[context_key].ndim)
+        )
+    contexts["time"] = jax.device_get(storage.contexts["time"]).transpose(1, 0)
+    return {"grid_obs": grid_obs, "position_obs": position_obs, "contexts": contexts}
+
+
+def run_rollout_loop(
+    env,
+    num_iterations,
+    num_envs=8,
+    recording_times=8,
+    frames_per_recording=8,
+    use_gif=False,
+):
     args = Args()
     args.batch_size = int(num_envs * args.num_steps)
     args.minibatch_size = int(args.batch_size // args.num_minibatches)
@@ -933,6 +957,7 @@ def run_rollout_loop(env, num_iterations, num_envs=8, use_gif=False):
             "avg_returned_episode_length": "0.0",
         },
     )
+    storage_returns = []
     with orbax.checkpoint.CheckpointManager(
         "/tmp/flax_ckpt/orbax/managed",
         options=checkpoint_options,
@@ -962,6 +987,25 @@ def run_rollout_loop(env, num_iterations, num_envs=8, use_gif=False):
                 key,
                 global_step,
             )
+            if use_gif:
+                checkpoint_spacing = max(1, num_iterations // recording_times)
+                frame_iteration = iteration - 1  # Offset iteration by 1
+
+                if (
+                    frame_iteration % checkpoint_spacing == 0
+                    and len(storage_returns) < recording_times
+                ):
+                    # print("Iteration video start", iteration)
+                    storage_returns.append([])
+                    storage_returns[-1].append(build_storage_return(storage, env))
+                # If we're within 7 steps after a checkpoint, keep adding steps
+                elif (
+                    len(storage_returns) > 0
+                    and len(storage_returns[-1]) < frames_per_recording
+                    and frame_iteration % checkpoint_spacing < frames_per_recording
+                ):
+                    # print("Iteration video continue", iteration)
+                    storage_returns[-1].append(build_storage_return(storage, env))
             storage = compute_gae(agent_state, next_obs, next_done, storage)
             agent_state, loss, pg_loss, v_loss, entropy_loss, approx_kl, key = (
                 update_ppo(
@@ -1054,25 +1098,9 @@ def run_rollout_loop(env, num_iterations, num_envs=8, use_gif=False):
                     iteration,
                     args=orbax.checkpoint.args.StandardSave(agent_state.params),
                 )
-
-    # Save grid observations to JSON file
-    grid_obs = jax.device_get(storage.grid_obs).transpose(
-        1, 0, 2, 3
-    )  # Get array from device and swap first two dims
-    position_obs = jax.device_get(storage.position_obs).transpose(
-        1, 0, 2
-    )  # Get array from device and swap first two dims
-    contexts = {}
-    if use_gif:
-        for context_key in env.per_env_context_keys:
-            contexts[context_key] = jax.device_get(
-                storage.contexts[context_key]
-            ).transpose(1, 0, *range(2, storage.contexts[context_key].ndim))
-        contexts["time"] = jax.device_get(storage.contexts["time"]).transpose(1, 0)
-
     # envs.close()
     writer.close()
-    return grid_obs, position_obs, contexts, agent_state, run_name
+    return storage_returns, agent_state, run_name
 
 
 def load_actor(params_path: str, env):

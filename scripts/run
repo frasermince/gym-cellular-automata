@@ -228,29 +228,40 @@ def save_frames_and_plots(
     n_processes = 8
 
     # Process all frames in parallel
-    games = []
-    for frames in frames_per_game:
-        if parallel:
-            with Pool(processes=n_processes) as pool:
-                games.append(
-                    list(
-                        tqdm(
-                            pool.imap(process_func, frames),
-                            total=len(frames),
-                            desc="Processing frames",
-                        )
-                    )
-                )
-        else:
-            games.append(
-                list(
-                    tqdm(
-                        map(process_func, frames),
-                        total=len(frames),
-                        desc="Processing frames",
-                    )
+    # Initialize empty games list with the right number of sublists
+    games = [[] for _ in range(len(frames_per_game))]
+
+    # Flatten all frames into a single list with their game indices
+    flat_frames = []
+    frame_to_game_idx = []
+    for game_idx, frames in enumerate(frames_per_game):
+        flat_frames.extend(frames)
+        frame_to_game_idx.extend([game_idx] * len(frames))
+
+    if parallel:
+        with Pool(processes=n_processes) as pool:
+            processed_frames = list(
+                tqdm(
+                    pool.imap(process_func, flat_frames),
+                    total=len(flat_frames),
+                    desc="Processing frames",
                 )
             )
+            # Append each processed frame to its corresponding game list
+            for frame_idx, processed_frame in enumerate(processed_frames):
+                game_idx = frame_to_game_idx[frame_idx]
+                games[game_idx].append(processed_frame)
+    else:
+        # Process frames sequentially and organize them into games
+        for frame_idx, frame in enumerate(
+            tqdm(
+                map(process_func, flat_frames),
+                total=len(flat_frames),
+                desc="Processing frames",
+            )
+        ):
+            game_idx = frame_to_game_idx[frame_idx]
+            games[game_idx].append(frame)
 
     for i in range(len(games)):
         fps = 1000 / duration_between
@@ -358,7 +369,13 @@ def generate_frames(
             next_obs, next_info = run_env(next_obs, next_info)
 
         save_frames_and_plots(
-            env, name, num_envs, frames_per_game, duration_between, no_hidden
+            env,
+            name,
+            num_envs,
+            frames_per_game,
+            duration_between,
+            no_hidden,
+            parallel=True,
         )
 
     else:
@@ -367,41 +384,48 @@ def generate_frames(
                 "./profile", create_perfetto_link=True, create_perfetto_trace=True
             ):
                 grid_obs_list, agent_state = run_rollout_loop(
-                    env, updates, num_envs=num_envs, use_gif=save_gif
+                    env, updates, num_envs=num_envs, recording_times=2, use_gif=save_gif
                 )
                 grid_obs_list.block_until_ready()
         else:
-            grid_obs, position_obs, contexts, agent_state, run_name = run_rollout_loop(
-                env, updates, num_envs=num_envs, use_gif=save_gif
+            storage_returns, agent_state, run_name = run_rollout_loop(
+                env, updates, num_envs=num_envs, recording_times=8, use_gif=save_gif
             )
             # grid_obs shape is (time, env, height, width)
+            frames_per_game = []
             if save_gif:
-                for game_index in range(1):
-                    for frame_index in range(grid_obs.shape[1]):
-                        frames_per_game[game_index].append(
-                            {
-                                "grid": grid_obs[game_index, frame_index],
-                                "wind_index": contexts["wind_index"][
-                                    game_index, frame_index
-                                ],
-                                "time": contexts["time"][game_index, frame_index],
-                                "position": tuple(
-                                    map(int, position_obs[game_index, frame_index])
-                                ),
-                                "frame_index": frame_index,
-                                "game_index": game_index,
-                                "cell_count": env.count_cells(
-                                    grid_obs[game_index, frame_index]
-                                ),
-                            }
-                        )
+                for video_index, video_frames in enumerate(storage_returns):
+                    frames_per_game.append([])
+                    for frame_group in video_frames:
+                        grid_obs = frame_group["grid_obs"]
+                        position_obs = frame_group["position_obs"]
+                        contexts = frame_group["contexts"]
+                        for frame_index in range(grid_obs.shape[1]):
+                            frames_per_game[video_index].append(
+                                {
+                                    "grid": grid_obs[0, frame_index],
+                                    "wind_index": contexts["wind_index"][
+                                        0, frame_index
+                                    ],
+                                    "time": contexts["time"][0, frame_index],
+                                    "position": tuple(
+                                        map(int, position_obs[0, frame_index])
+                                    ),
+                                    "frame_index": frame_index,
+                                    "game_index": video_index,
+                                    "cell_count": env.count_cells(
+                                        grid_obs[0, frame_index]
+                                    ),
+                                }
+                            )
                 save_frames_and_plots(
                     env,
                     name,
-                    1,
-                    [frames_per_game[0]],
+                    len(frames_per_game),
+                    frames_per_game,
                     duration_between,
                     no_hidden,
+                    parallel=not bool(len(jax.devices()) >= 4),
                 )
             with open(f"runs/{run_name}_params.pkl", "wb") as f:
                 pickle.dump(agent_state.params, f)
