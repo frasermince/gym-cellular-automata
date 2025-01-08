@@ -801,7 +801,9 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             shape=(self.num_envs, 2),
             dtype=TYPE_INT,
         )
-        self.time_space = spaces.Box(0.0, float("inf"), shape=(), dtype=TYPE_BOX)
+        self.time_space = spaces.Box(
+            0.0, float("inf"), shape=(self.num_envs,), dtype=TYPE_BOX
+        )
 
         self.context_space = spaces.Dict(
             {
