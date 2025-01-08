@@ -412,7 +412,7 @@ def generate_frames(
                                         map(int, position_obs[0, frame_index])
                                     ),
                                     "frame_index": frame_index,
-                                    "game_index": video_index,
+                                    "game_index": 0,
                                     "cell_count": env.count_cells(
                                         grid_obs[0, frame_index]
                                     ),
