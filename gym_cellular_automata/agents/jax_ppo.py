@@ -1063,11 +1063,12 @@ def run_rollout_loop(env, num_iterations, num_envs=8, use_gif=False):
         1, 0, 2
     )  # Get array from device and swap first two dims
     contexts = {}
-    for context_key in env.per_env_context_keys:
-        contexts[context_key] = jax.device_get(storage.contexts[context_key]).transpose(
-            1, 0, *range(2, storage.contexts[context_key].ndim)
-        )
-    contexts["time"] = jax.device_get(storage.contexts["time"]).transpose(1, 0)
+    if use_gif:
+        for context_key in env.per_env_context_keys:
+            contexts[context_key] = jax.device_get(
+                storage.contexts[context_key]
+            ).transpose(1, 0, *range(2, storage.contexts[context_key].ndim))
+        contexts["time"] = jax.device_get(storage.contexts["time"]).transpose(1, 0)
 
     # envs.close()
     writer.close()
