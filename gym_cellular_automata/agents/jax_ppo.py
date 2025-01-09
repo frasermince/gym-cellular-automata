@@ -705,7 +705,9 @@ def run_rollout_loop(
         b_advantages = storage.advantages.reshape(-1)
         b_returns = storage.returns.reshape(-1)
         # Generate keys for all epochs
-        keys = jax.random.split(key, args.update_epochs)
+        keys = jax.random.split(key, args.update_epochs + 1)
+        key = keys[0]
+        permutation_keys = keys[1:]
 
         num_minibatches = args.batch_size // args.minibatch_size
         # vmap the permutation generation over epoch keys
@@ -713,7 +715,7 @@ def run_rollout_loop(
             lambda k: jax.random.permutation(k, args.batch_size).reshape(
                 (num_minibatches, args.minibatch_size)
             )
-        )(keys)
+        )(permutation_keys)
 
         if len(jax.devices()) >= 4 and not SHARD_STORAGE and SHOULD_SHARD:
             # print("Sharding visualization grid shape", b_grid_obs.shape)
@@ -791,9 +793,8 @@ def run_rollout_loop(
         ppo_loss_grad_fn = jax.value_and_grad(ppo_loss, has_aux=True)
 
         def update_epoch(carry, scan_inputs):
-            agent_state, key = carry
+            agent_state = carry
             epoch_idx, epoch_permutation = scan_inputs
-            key, subkey = jax.random.split(key)
             # permutation = jax.random.permutation(
             #     subkey, args.batch_size, independent=True
             # ).reshape((num_minibatches, args.minibatch_size))
@@ -830,7 +831,7 @@ def run_rollout_loop(
             (agent_state, loss, pg_loss, v_loss, entropy_loss, approx_kl), _ = (
                 jax.lax.scan(update_minibatch, init_carry, epoch_permutation)
             )
-            return (agent_state, key), (
+            return (agent_state), (
                 loss / num_minibatches,
                 pg_loss / num_minibatches,
                 v_loss / num_minibatches,
@@ -838,8 +839,8 @@ def run_rollout_loop(
                 approx_kl / num_minibatches,
             )
 
-        init_carry = (agent_state, key)
-        (final_agent_state, final_key), (
+        init_carry = (agent_state)
+        (final_agent_state), (
             loss,
             pg_loss,
             v_loss,
@@ -862,7 +863,7 @@ def run_rollout_loop(
             v_loss,
             entropy_loss,
             approx_kl,
-            final_key,
+            key,
         )
 
     # TRY NOT TO MODIFY: start the game
