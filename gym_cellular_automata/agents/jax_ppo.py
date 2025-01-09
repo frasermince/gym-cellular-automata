@@ -865,6 +865,7 @@ def run_rollout_loop(
     start_time = time.time()
     next_obs, report = env.reset()
     if len(jax.devices()) >= 4:
+        print(f"SHARDING to {jax.devices()}")
         mesh = jax.make_mesh((4,), ("devices"))
         grid = jax.device_put(next_obs[0], NamedSharding(mesh, P("devices")))
         context = next_obs[1]
