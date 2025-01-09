@@ -266,6 +266,7 @@ def build_storage_return(storage, env):
     return {"grid_obs": grid_obs, "position_obs": position_obs, "contexts": contexts}
 
 
+# 100,000 should be sufficient 100,000 / 128 = 781.25
 def run_rollout_loop(
     env,
     num_iterations,
@@ -274,6 +275,8 @@ def run_rollout_loop(
     frames_per_recording=8,
     use_gif=False,
     key=jax.random.key(0),
+    learning_rate=2.5e-4,
+    device_index=0,
 ):
     args = Args()
     args.batch_size = int(num_envs * args.num_steps)
@@ -405,7 +408,7 @@ def run_rollout_loop(
             - (count // (args.num_minibatches * args.update_epochs))
             / args.num_iterations
         )
-        return args.learning_rate * frac
+        return learning_rate * frac
 
     network = Network()
     actor = Actor(action_dims=env.action_space.nvec[0])
@@ -446,7 +449,7 @@ def run_rollout_loop(
         tx=optax.chain(
             optax.clip_by_global_norm(args.max_grad_norm),
             optax.inject_hyperparams(optax.adam)(
-                learning_rate=linear_schedule if args.anneal_lr else args.learning_rate,
+                learning_rate=linear_schedule if args.anneal_lr else learning_rate,
                 eps=1e-5,
             ),
         ),
@@ -1014,7 +1017,7 @@ def run_rollout_loop(
                     key,
                 )
             )
-            if len(jax.devices()) >= 4:
+            if len(jax.devices()) >= 4 and SHOULD_SHARD:
                 # Gather stats from all devices
                 mesh = jax.make_mesh((4,), ("devices",))
 

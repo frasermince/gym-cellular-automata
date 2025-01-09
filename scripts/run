@@ -286,6 +286,8 @@ def generate_frames(
     no_hidden: bool = False,
     actor=None,
     key=jax.random.key(0),
+    device=0,
+    learning_rate=2.5e-4,
 ):
     import time
 
@@ -384,15 +386,11 @@ def generate_frames(
         )
 
     else:
-        if profile:
-            with trace(
-                "./profile", create_perfetto_link=True, create_perfetto_trace=True
-            ):
-                grid_obs_list, agent_state = run_rollout_loop(
-                    env, updates, num_envs=num_envs, recording_times=2, use_gif=save_gif
-                )
-                grid_obs_list.block_until_ready()
+        if len(jax.devices()) >= 4:
+            device = jax.devices("tpu")[device]
         else:
+            device = jax.devices("cpu")[0]
+        with jax.default_device(device):
             storage_returns, agent_state, run_name = run_rollout_loop(
                 env,
                 updates,
@@ -400,45 +398,43 @@ def generate_frames(
                 recording_times=8,
                 use_gif=save_gif,
                 key=key,
+                learning_rate=learning_rate,
+                device_index=device,
             )
-            # grid_obs shape is (time, env, height, width)
-            frames_per_game = []
-            if save_gif:
-                for video_index, video_frames in enumerate(storage_returns):
-                    frames_per_game.append([])
-                    for frame_group in video_frames:
-                        grid_obs = frame_group["grid_obs"]
-                        position_obs = frame_group["position_obs"]
-                        contexts = frame_group["contexts"]
-                        for frame_index in range(grid_obs.shape[1]):
-                            frames_per_game[video_index].append(
-                                {
-                                    "grid": grid_obs[0, frame_index],
-                                    "wind_index": contexts["wind_index"][
-                                        0, frame_index
-                                    ],
-                                    "time": contexts["time"][0, frame_index],
-                                    "position": tuple(
-                                        map(int, position_obs[0, frame_index])
-                                    ),
-                                    "frame_index": frame_index,
-                                    "game_index": 0,
-                                    "cell_count": env.count_cells(
-                                        grid_obs[0, frame_index]
-                                    ),
-                                }
-                            )
-                save_frames_and_plots(
-                    env,
-                    name,
-                    len(frames_per_game),
-                    frames_per_game,
-                    duration_between,
-                    no_hidden,
-                    parallel=not bool(len(jax.devices()) >= 4),
-                )
-            with open(f"runs/{run_name}_params.pkl", "wb") as f:
-                pickle.dump(agent_state.params, f)
+        # grid_obs shape is (time, env, height, width)
+        frames_per_game = []
+        if save_gif:
+            for video_index, video_frames in enumerate(storage_returns):
+                frames_per_game.append([])
+                for frame_group in video_frames:
+                    grid_obs = frame_group["grid_obs"]
+                    position_obs = frame_group["position_obs"]
+                    contexts = frame_group["contexts"]
+                    for frame_index in range(grid_obs.shape[1]):
+                        frames_per_game[video_index].append(
+                            {
+                                "grid": grid_obs[0, frame_index],
+                                "wind_index": contexts["wind_index"][0, frame_index],
+                                "time": contexts["time"][0, frame_index],
+                                "position": tuple(
+                                    map(int, position_obs[0, frame_index])
+                                ),
+                                "frame_index": frame_index,
+                                "game_index": 0,
+                                "cell_count": env.count_cells(grid_obs[0, frame_index]),
+                            }
+                        )
+            save_frames_and_plots(
+                env,
+                name,
+                len(frames_per_game),
+                frames_per_game,
+                duration_between,
+                no_hidden,
+                parallel=not bool(len(jax.devices()) >= 4),
+            )
+        with open(f"runs/{run_name}_params.pkl", "wb") as f:
+            pickle.dump(agent_state.params, f)
 
     end_time = time.time()
     print(f"Generation completed in {end_time - start_time:.2f} seconds")
@@ -490,6 +486,8 @@ def generate_gif_envs(args):
         no_hidden=args.no_hidden,
         actor=actor,
         key=subkey,
+        device=int(args.device),
+        learning_rate=float(args.learning_rate),
     )
 
 
@@ -553,10 +551,12 @@ parser.add_argument(
     type=int,
     default=256,
 )
+parser.add_argument("--device", default="0")
 
 parser.add_argument("--no-hidden", action="store_true")
 parser.add_argument("--params")
 parser.add_argument("--key", default="0")
+parser.add_argument("--learning_rate", default=2.5e-4)
 
 if __name__ == "__main__":
     args = parser.parse_args()
