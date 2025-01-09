@@ -132,7 +132,7 @@ class PartiallyObservableForestFireJax(Operator):
         directions = random.randint(
             key2, shape=(grid_height, grid_width, max_pinecones), minval=0, maxval=8
         )
-        thrust = 3.0 * random.normal(
+        thrust = 1.0 * random.normal(
             key3, shape=(grid_height, grid_width, max_pinecones)
         )
 
