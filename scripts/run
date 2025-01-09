@@ -459,7 +459,7 @@ def generate_gif_envs(args):
         if isinstance(args.speed_multiplier, str)
         else args.speed_multiplier
     )
-    key = jax.random.key(args.key)
+    key = jax.random.key(int(args.key))
     key, subkey = jax.random.split(key)
 
     env = ProtoEnv(
@@ -556,7 +556,7 @@ parser.add_argument(
 
 parser.add_argument("--no-hidden", action="store_true")
 parser.add_argument("--params")
-parser.add_argument("--key", default=0)
+parser.add_argument("--key", default="0")
 
 if __name__ == "__main__":
     args = parser.parse_args()
