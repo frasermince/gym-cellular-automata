@@ -31,7 +31,7 @@ if jax.devices()[0].platform == "tpu":
 # Fix CUDNN non-determinisim; https://github.com/google/jax/issues/4823#issuecomment-952835771
 
 SHARD_STORAGE = False
-SHOULD_SHARD = True
+SHOULD_SHARD = False
 # jax.config.update("jax_default_matmul_precision", "bfloat16")
 
 
@@ -864,7 +864,7 @@ def run_rollout_loop(
     global_step = 0
     start_time = time.time()
     next_obs, report = env.reset()
-    if len(jax.devices()) >= 4:
+    if len(jax.devices()) >= 4 and SHOULD_SHARD:
         print(f"SHARDING to {jax.devices()}")
         mesh = jax.make_mesh((4,), ("devices"))
         grid = jax.device_put(next_obs[0], NamedSharding(mesh, P("devices")))
