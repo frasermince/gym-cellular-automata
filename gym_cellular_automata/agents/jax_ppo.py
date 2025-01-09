@@ -1087,6 +1087,7 @@ def run_rollout_loop(
                     "games_finished": int(jax.device_get(total_finished)),
                     "avg_episode_length": f"{avg_episode_length:.2f}",
                     "avg_returned_episode_length": f"{avg_returned_episode_length:.2f}",
+                    "avg_return_per_timestep": f"{avg_episodic_return/max(avg_returned_episode_length, 1e-8):.4f}",
                 },
                 refresh=True,
             )

@@ -239,18 +239,22 @@ def save_frames_and_plots(
         frame_to_game_idx.extend([game_idx] * len(frames))
 
     if parallel:
-        with Pool(processes=n_processes) as pool:
-            processed_frames = list(
-                tqdm(
-                    pool.imap(process_func, flat_frames),
-                    total=len(flat_frames),
-                    desc="Processing frames",
+        chunk_size = 100
+        # processed_frames = []
+        for i in range(0, len(flat_frames), chunk_size):
+            with Pool(processes=n_processes) as pool:
+                chunk = flat_frames[i : i + chunk_size]
+                chunk_processed = list(
+                    tqdm(
+                        pool.imap(process_func, chunk),
+                        total=len(chunk),
+                        desc=f"Processing frames {i}-{i+len(chunk)}",
+                    )
                 )
-            )
-            # Append each processed frame to its corresponding game list
-            for frame_idx, processed_frame in enumerate(processed_frames):
-                game_idx = frame_to_game_idx[frame_idx]
-                games[game_idx].append(processed_frame)
+                # Append each processed frame to its corresponding game list
+                for frame_idx, processed_frame in enumerate(chunk_processed):
+                    game_idx = frame_to_game_idx[i + frame_idx]
+                    games[game_idx].append(processed_frame)
     else:
         # Process frames sequentially and organize them into games
         for frame_idx, frame in enumerate(
