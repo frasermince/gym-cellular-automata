@@ -261,6 +261,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         self,
         nrows,
         ncols,
+        key,
         num_envs=8,
         speed_move=0.12,
         speed_act=0.03,
@@ -278,6 +279,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         super().__init__(nrows, ncols, **kwargs)
         self.middle_fire = middle_fire
         self.use_hidden = use_hidden
+        self.starting_key = key
 
         self.shared_context_keys = {
             "winds",  # Shared wind patterns
@@ -293,6 +295,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             "altitude",
             "slope",
             "fire_age",
+            "key",
         }
 
         self.num_envs = num_envs
@@ -664,6 +667,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         init_position = jnp.array(self._pos_bull)
 
         # Per-environment context parameters
+        new_keys = jax.random.split(self.starting_key, self.num_envs)
         per_env_context = {
             "wind_index": jnp.array(
                 (
@@ -678,6 +682,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             "altitude": self._altitude,
             "slope": self._slope,
             "fire_age": self._fire_age,
+            "key": new_keys,
         }
 
         # Shared context parameters

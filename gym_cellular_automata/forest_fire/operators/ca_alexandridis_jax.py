@@ -297,14 +297,16 @@ class PartiallyObservableForestFireJax(Operator):
             "current_wind_matrix": wind_matrix,
             "current_ft": ft,
         }
-        key = random.PRNGKey(self.np_random.integers(0, 2**32))
+        key = per_env_context["key"]
+        key, subkey = random.split(key)
         new_grid, new_fire_age = self._update_grid(
-            grid, key, jitted_per_env_context, shared_context
+            grid, subkey, jitted_per_env_context, shared_context
         )
 
         # Handle wind changes
         key, subkey = random.split(key)
         wind_change = random.uniform(subkey) < shared_context["p_wind_change"]
+        key, subkey = random.split(key)
         new_wind_index = jnp.where(
             wind_change,
             (per_env_context["wind_index"] + random.randint(subkey, (), 1, 8))
@@ -315,6 +317,7 @@ class PartiallyObservableForestFireJax(Operator):
         per_env_context = dict(per_env_context)
         per_env_context["fire_age"] = new_fire_age
         per_env_context["wind_index"] = new_wind_index
+        per_env_context["key"] = key
         # Convert JAX array back to numpy before returning
         # new_grid = np.array(new_grid)
 

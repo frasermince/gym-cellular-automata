@@ -285,6 +285,7 @@ def generate_frames(
     no_train: bool = False,
     no_hidden: bool = False,
     actor=None,
+    key=jax.random.key(0),
 ):
     import time
 
@@ -393,7 +394,12 @@ def generate_frames(
                 grid_obs_list.block_until_ready()
         else:
             storage_returns, agent_state, run_name = run_rollout_loop(
-                env, updates, num_envs=num_envs, recording_times=8, use_gif=save_gif
+                env,
+                updates,
+                num_envs=num_envs,
+                recording_times=8,
+                use_gif=save_gif,
+                key=key,
             )
             # grid_obs shape is (time, env, height, width)
             frames_per_game = []
@@ -453,10 +459,13 @@ def generate_gif_envs(args):
         if isinstance(args.speed_multiplier, str)
         else args.speed_multiplier
     )
+    key = jax.random.key(args.key)
+    key, subkey = jax.random.split(key)
 
     env = ProtoEnv(
         nrows=args.size,
         ncols=args.size,
+        key=key,
         num_envs=args.num_envs,
         speed_move=speed_move * speed_multiplier,
         speed_act=0.03 * speed_multiplier,
@@ -480,6 +489,7 @@ def generate_gif_envs(args):
         no_train=args.no_train,
         no_hidden=args.no_hidden,
         actor=actor,
+        key=subkey,
     )
 
 
@@ -546,6 +556,7 @@ parser.add_argument(
 
 parser.add_argument("--no-hidden", action="store_true")
 parser.add_argument("--params")
+parser.add_argument("--key", default=0)
 
 if __name__ == "__main__":
     args = parser.parse_args()

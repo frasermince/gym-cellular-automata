@@ -273,6 +273,7 @@ def run_rollout_loop(
     recording_times=8,
     frames_per_recording=8,
     use_gif=False,
+    key=jax.random.key(0),
 ):
     args = Args()
     args.batch_size = int(num_envs * args.num_steps)
@@ -310,7 +311,6 @@ def run_rollout_loop(
     # TRY NOT TO MODIFY: seeding
     random.seed(args.seed)
     np.random.seed(args.seed)
-    key = jax.random.PRNGKey(args.seed)
     key, network_key, actor_key, critic_key = jax.random.split(key, 4)
 
     # env setup
