@@ -639,14 +639,16 @@ def run_rollout_loop(
         storage = storage.replace(advantages=storage.advantages.at[:].set(0.0))
 
         grid, context = env.observation_space.sample()
+        network_output = network.apply(
+            agent_state.params["network_params"],
+            grid,
+            context["position"],
+        )
         next_value = critic.apply(
             agent_state.params["critic_params"],
-            network.apply(
-                agent_state.params["network_params"],
-                grid,
-                context["position"],
-            ),
-        ).squeeze()
+            network_output,
+        ).squeeze(-1)
+
         lastgaelam = jnp.zeros(next_done.shape)
 
         def gae_step(carry, t):
