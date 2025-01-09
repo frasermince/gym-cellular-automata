@@ -122,7 +122,7 @@ class PartiallyObservableForestFireJax(Operator):
         grid_height, grid_width = grid.shape
 
         # Sample number of pinecones for each cell (clipped to max)
-        key1, key2, key3 = random.split(key, 3)
+        key, key1, key2, key3 = random.split(key, 4)
         n_pinecones = jnp.minimum(
             random.poisson(key1, 1.0, shape=grid.shape), max_pinecones
         )
@@ -226,9 +226,9 @@ class PartiallyObservableForestFireJax(Operator):
             per_env_context["slope"],
         )
 
-        random_values_burn = random.uniform(key, burn_probs.shape)
+        random_values_burn = random.uniform(subkey, burn_probs.shape)
         key, subkey = random.split(key)
-        random_values_grow = random.uniform(key, grid.shape)
+        random_values_grow = random.uniform(subkey, grid.shape)
 
         # Generate random fire ages (8-15) for new fires
         key, fire_age_key = random.split(key)

@@ -556,7 +556,7 @@ parser.add_argument("--device", default="0")
 parser.add_argument("--no-hidden", action="store_true")
 parser.add_argument("--params")
 parser.add_argument("--key", default="0")
-parser.add_argument("--learning_rate", default=2.5e-4)
+parser.add_argument("--learning-rate", default=2.5e-4)
 
 if __name__ == "__main__":
     args = parser.parse_args()
