@@ -20,6 +20,7 @@ from flax.linen.initializers import constant, orthogonal
 from flax.training.train_state import TrainState
 from torch.utils.tensorboard import SummaryWriter
 from jax.experimental import host_callback
+import math
 
 
 def policy_printer(args):
@@ -120,22 +121,7 @@ class Network(nn.Module):
     log_grid_shapes: bool = False
 
     @nn.compact
-    def __call__(self, grid, position):
-        if self.log_grid_shapes:
-            print(f"Initial grid shape: {grid.shape}")
-            print(f"Initial position shape: {position.shape}")
-
-        batch_size = grid.shape[0]
-        height, width = grid.shape[1:3]
-        x_pos, y_pos = position[..., 0], position[..., 1]
-        pos_channel = jnp.zeros((batch_size, height, width, 1))
-        pos_channel = pos_channel.at[:, x_pos, y_pos, 0].set(1.0)
-
-        grid = grid[..., None]
-        jnp.concatenate([grid, pos_channel], axis=-1)
-        if self.log_grid_shapes:
-            print(f"Grid shape after adding channel dim: {grid.shape}")
-
+    def __call__(self, grid):
         grid = nn.Conv(
             32,
             kernel_size=(8, 8),
@@ -207,7 +193,10 @@ class Critic(nn.Module):
 
 
 class Actor(nn.Module):
-    action_dims: Sequence[int]
+    action_dims: Sequence[int]  # Regular categorical dimensions
+    choose_k: Sequence[tuple[int, int]] = (
+        None  # List of (n, k) tuples for "choose k from n" actions
+    )
 
     @nn.compact
     def __call__(self, x):
@@ -220,13 +209,27 @@ class Actor(nn.Module):
         )(features)
         features = nn.relu(features)
 
-        # Create separate Dense layers for each action dimension
+        # Create logits for each action dimension
         logits = []
+
+        # Handle regular categorical actions
         for dim in self.action_dims:
             head = nn.Dense(dim, kernel_init=orthogonal(0.01), bias_init=constant(0.0))(
                 features
             )
             logits.append(head)
+
+        # Handle "choose k" actions
+        if self.choose_k is not None:
+            for n, k in self.choose_k:
+                # Calculate number of possible combinations (n choose k)
+                num_combinations = sum(math.comb(n, i) for i in range(k + 1))
+                head = nn.Dense(
+                    num_combinations,
+                    kernel_init=orthogonal(0.01),
+                    bias_init=constant(0.0),
+                )(features)
+                logits.append(head)
 
         return logits
 
@@ -449,7 +452,7 @@ def run_rollout_loop(
             next_done,
             truncated,
             next_info,
-        ) = env.conditional_reset(step_tuple)
+        ) = env.conditional_reset(step_tuple, action)
         # episode_stats = episode_stats.replace(
         #     episode_returns=(new_episode_return)
         #     * (1 - next_info["terminated"])
@@ -478,20 +481,17 @@ def run_rollout_loop(
         return learning_rate * frac
 
     network = Network()
-    actor = Actor(action_dims=env.action_space.nvec[0])
+    actor = Actor(action_dims=env.action_space.nvec[0], choose_k=env.extension_choices)
     critic = Critic()
 
     grid_sample, context = env.observation_space.sample()
-    network_params = network.init(
-        network_key, grid_sample, jnp.array(context["position"])
-    )
+    network_params = network.init(network_key, grid_sample)
     grid_sample, context = env.observation_space.sample()
     actor_params = actor.init(
         actor_key,
         network.apply(
             network_params,
             grid_sample,
-            jnp.array(context["position"]),
         ),
     )
     grid_sample, context = env.observation_space.sample()
@@ -500,7 +500,6 @@ def run_rollout_loop(
         network.apply(
             network_params,
             grid_sample,
-            jnp.array(context["position"]),
         ),
     )
 
@@ -558,7 +557,7 @@ def run_rollout_loop(
                 contexts=contexts,
                 actions=jax.device_put(
                     jnp.zeros(
-                        (args.num_steps,) + env.action_space.shape,
+                        (args.num_steps,) + env.total_action_space.shape,
                         dtype=jnp.int32,
                     ),
                     NamedSharding(mesh, P("devices", None)),
@@ -604,7 +603,7 @@ def run_rollout_loop(
                 (args.num_steps,) + context["position"].shape, dtype=jnp.int32
             ),
             actions=jnp.zeros(
-                (args.num_steps,) + env.action_space.shape,
+                (args.num_steps,) + env.total_action_space.shape,
                 dtype=jnp.int32,
             ),
             logprobs=jnp.zeros((args.num_steps,)),
@@ -631,7 +630,6 @@ def run_rollout_loop(
         hidden = network.apply(
             agent_state.params["network_params"],
             next_grid_obs,
-            next_position_obs,
         )
         action_logits = actor.apply(agent_state.params["actor_params"], hidden)
 
@@ -686,7 +684,7 @@ def run_rollout_loop(
     ):
         """calculate value, logprob of supplied `action`, and entropy"""
         grid, position = x
-        hidden = network.apply(params["network_params"], grid, position)
+        hidden = network.apply(params["network_params"], grid)
         logits_set = actor.apply(params["actor_params"], hidden)
         # normalize the logits https://gregorygundersen.com/blog/2020/02/09/log-sum-exp/
 
@@ -722,7 +720,6 @@ def run_rollout_loop(
         network_output = network.apply(
             agent_state.params["network_params"],
             grid,
-            context["position"],
         )
         next_value = critic.apply(
             agent_state.params["critic_params"],
@@ -778,7 +775,7 @@ def run_rollout_loop(
             (-1,) + env.observation_space[1]["position"].shape[1:]
         )
         b_logprobs = storage.logprobs.reshape((-1,))
-        b_actions = storage.actions.reshape((-1,) + (env.action_space.shape[-1],))
+        b_actions = storage.actions.reshape((-1,) + (env.total_action_space.shape[-1],))
         b_advantages = storage.advantages.reshape(-1)
         b_returns = storage.returns.reshape(-1)
         # Generate keys for all epochs
@@ -1002,7 +999,6 @@ def run_rollout_loop(
         global_step,
     ):
         # Remove @jax.jit and use jax.lax.fori_loop instead
-
         def body_fun(step, carry):
             (
                 agent_state,
@@ -1178,6 +1174,9 @@ def run_rollout_loop(
                     return True
                 return False
 
+            # with np.printoptions(threshold=np.inf, linewidth=np.inf):
+            #     print("ACTIONS", storage.actions)
+
             has_nan = False
             # Check key metrics
             has_nan |= check_values("policy_loss", pg_loss)
@@ -1274,7 +1273,9 @@ def load_actor(params_path: str, env):
     """
     # Initialize models
     network = Network()
-    actor = Actor(action_dims=env.action_space.nvec[0])
+    actor = Actor(
+        action_dims=env.action_space.nvec[0], choose_k=[env.extension_choices]
+    )
 
     critic = Critic()
 
@@ -1291,16 +1292,14 @@ def load_actor(params_path: str, env):
     grid_sample, context = env.observation_space.sample()
     network_key, actor_key, critic_key = jax.random.split(jax.random.PRNGKey(0), 3)
 
-    network_params = network.init(
-        network_key, grid_sample, jnp.array(context["position"])
-    )
+    network_params = network.init(network_key, grid_sample)
     actor_params = actor.init(
         actor_key,
-        network.apply(network_params, grid_sample, jnp.array(context["position"])),
+        network.apply(network_params, grid_sample),
     )
     critic_params = critic.init(
         critic_key,
-        network.apply(network_params, grid_sample, jnp.array(context["position"])),
+        network.apply(network_params, grid_sample),
     )
     agent_state = {
         "network_params": network_params,
@@ -1358,7 +1357,6 @@ def load_actor(params_path: str, env):
         hidden = network.apply(
             restored_state["network_params"],
             grid_obs,
-            position_obs,
         )
 
         # Get action logits

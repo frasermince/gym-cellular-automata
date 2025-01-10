@@ -24,6 +24,119 @@ from .utils.advanced_bulldozer_render import render, plot_grid_attribute
 import math
 from functools import partial
 
+from typing import Dict, Callable, NamedTuple
+import flax
+import itertools
+
+
+@flax.struct.dataclass
+class ExtensionInfo:
+    index: int
+    fn: Callable
+
+
+# TODO: confirm wind gradient looks sane
+@jax.jit
+def wind_fn(grid, per_env_context, shared_context):
+    # Get wind probabilities for each environment
+    wind_index = per_env_context["wind_index"]
+
+    # Create coordinate grids
+    x, y = jnp.meshgrid(
+        jnp.linspace(0, 1, grid.shape[1]),  # width dimension
+        jnp.linspace(0, 1, grid.shape[0]),  # height dimension
+    )
+
+    # Convert wind index to angle (in radians)
+    # 0 (North) = π/2, then rotate clockwise
+    angle = (jnp.pi / 2) - (wind_index * jnp.pi / 4)
+
+    # Calculate directional components
+    x_component = jnp.cos(angle)
+    y_component = jnp.sin(angle)
+
+    # Create gradient that increases in wind direction
+    wind_gradient = y * y_component + x * x_component
+
+    return wind_gradient
+
+
+@jax.jit
+def density_fn(grid, per_env_context, shared_context):
+    return per_env_context["density"]
+
+
+@jax.jit
+def vegetation_fn(grid, per_env_context, shared_context):
+    return per_env_context["vegetation"]
+
+
+@jax.jit
+def altitude_fn(grid, per_env_context, shared_context):
+    return per_env_context["altitude"]
+
+
+@jax.jit
+def noop_fn(grid, per_env_context, shared_context):
+    return jnp.zeros_like(grid)
+
+
+# Convert to tuple of ExtensionInfo objects, sorted by index
+EXTENSION_REGISTRY = tuple(
+    sorted(
+        [
+            ExtensionInfo(2, wind_fn),
+            ExtensionInfo(3, density_fn),
+            ExtensionInfo(4, vegetation_fn),
+            ExtensionInfo(5, altitude_fn),
+            ExtensionInfo(6, noop_fn),
+            ExtensionInfo(7, noop_fn),
+        ],
+        key=lambda x: x.index,
+    )
+)
+
+# EXTENSION_REGISTRY = tuple()
+
+
+@jax.jit
+def apply_extensions(grid, actions, per_env_context, shared_context):
+    """Helper function to apply each extension from the registry."""
+    extension_channels = []
+
+    # Process each extension in order
+    for ext_info in EXTENSION_REGISTRY:
+        result = ext_info.fn(grid, per_env_context, shared_context)
+        channel = jnp.where(actions[ext_info.index], result, jnp.zeros_like(result))
+        extension_channels.append(channel)
+
+    return extension_channels
+
+
+def create_up_to_k_mappings(n, k):
+    """Create mappings for combinations of size 0 to k from n items
+    Returns mappings between indices and binary arrays (e.g., [0,1,1,0] means items 1 and 2 are selected)
+    """
+    binary_vectors = []
+    binary_to_id = {}
+
+    current_id = 0
+    # Generate combinations for each size from 0 to k
+    for i in range(k + 1):
+        for combo in itertools.combinations(range(n), i):
+            # Create binary array (e.g., [0,1,1,0] for combo (1,2))
+            binary = [0] * n
+            for idx in combo:
+                binary[idx] = 1
+            binary = tuple(binary)  # Make it hashable for dict key
+
+            binary_vectors.append(binary)
+            binary_to_id[binary] = current_id
+            current_id += 1
+
+    id_to_binary = jnp.array(binary_vectors, dtype=jnp.int32)
+    return id_to_binary, binary_to_id
+
 
 def init_vegetation(row_count, column_count, num_envs):
     veg_matrix = np.zeros((num_envs, row_count, column_count), dtype=int)
@@ -247,15 +360,14 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
 
     @property
     def initial_state(self):
-        if self._resample_initial:
-            self.grid = self._initial_grid_distribution()
-            self.context = self._initial_context_distribution()
+        self.grid, fire_age = self._initial_grid_distribution()
+        self.context = self._initial_context_distribution(fire_age)
 
-            self._initial_state = self.grid, self.context
+        initial_state = self.grid, self.context
 
         self._resample_initial = False
 
-        return self._initial_state
+        return initial_state
 
     def __init__(
         self,
@@ -297,6 +409,15 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             "fire_age",
             "key",
         }
+
+        self.extension_map = [
+            "unblur",
+            "wind",
+            "density",
+            "vegetation",
+            "altitude",
+            "zoom",
+        ]
 
         self.num_envs = num_envs
         self.title = "ForestFireBulldozer" + str(nrows) + "x" + str(ncols)
@@ -440,10 +561,9 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         self.repeater = RepeatCAJax(
             self.ca, self.time_per_action, self.time_per_state, **self.repeater_space
         )
-        self._MDP = MDP(self.repeater, self.move_modify, **self.MDP_space)
-
-    # Gym API
-    # step, reset & seed methods inherited from parent class
+        self._MDP = MDP(
+            self.repeater, self.move_modify, len(EXTENSION_REGISTRY), **self.MDP_space
+        )
 
     @partial(jax.jit, static_argnums=0)
     def stateless_step(self, action, obs, info):
@@ -453,6 +573,22 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         shared_context = context["shared_context"]
         per_env_context = context["per_env_context"]
         per_env_in_axes = {k: 0 for k in self.per_env_context_keys}
+        non_comb_actions = self.action_space.shape[-1]
+        binary_actions = []
+        for i, extension_lookup in enumerate(self._extension_lookups):
+            extension_choice = action[:, non_comb_actions + i]
+            # Use jnp.take instead of dictionary lookup
+            binary_action = jnp.take(extension_lookup, extension_choice, axis=0)
+            binary_actions.append(binary_action)
+
+        if binary_actions:
+            binary_actions = jnp.concatenate(binary_actions, axis=-1)
+
+        non_comb_actions = self.action_space.shape[-1]
+        full_actions = jnp.concat(
+            (action[:, :non_comb_actions], binary_actions), axis=-1
+        )
+
         next_grid, updated_context = jax.vmap(
             self.MDP,
             in_axes=(
@@ -465,7 +601,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             ),  # grid, action, per_env_context, shared_context
         )(
             grid,
-            action,
+            full_actions,
             per_env_context,
             shared_context,
             context["position"],
@@ -502,27 +638,80 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         )
 
     @partial(jax.jit, static_argnums=(0,), static_argnames=("seed", "options"))
+    def reset(self, *, seed: Optional[int] = None, options: Optional[dict] = None):
+        self._resample_initial = True
+        initial_grid, initial_context = self.initial_state
+
+        obs = (initial_grid, initial_context)
+        info = {
+            "TimeLimit.truncated": jnp.full(initial_grid.shape[0], False),
+            "terminated": jnp.full(initial_grid.shape[0], False),
+            "steps_elapsed": jnp.zeros(initial_grid.shape[0]),
+            "reward_accumulated": jnp.zeros(initial_grid.shape[0]),
+            "reward": jnp.zeros(initial_grid.shape[0]),
+        }
+
+        return obs, info
+
+    @partial(jax.jit, static_argnums=(0,), static_argnames=("seed", "options"))
     def conditional_reset(
-        self, step_tuple, *, seed: Optional[int] = None, options: Optional[dict] = None
+        self,
+        step_tuple,
+        action,
+        *,
+        seed: Optional[int] = None,
+        options: Optional[dict] = None,
     ):
         def reset_fn(args):
             step_tuple, (initial_grid, initial_context) = args
             obs, reward, terminated, truncated, info = step_tuple
             grid, context = obs
-            grid = jnp.where(terminated[:, None, None], initial_grid, grid)
+            grid_obs_only = jnp.where(
+                terminated[:, None, None], initial_grid[:, :, :, 0], grid[:, :, :, 0]
+            )
+
+            shared_context = context["shared_context"]
+            per_env_context = context["per_env_context"]
+            per_env_in_axes = {k: 0 for k in self.per_env_context_keys}
+
+            next_grid = jax.vmap(
+                lambda terminated, grid_obs_only, original_grid, position, action, per_env_context, shared_context: jnp.where(
+                    terminated,
+                    self.MDP.build_observation_on_extensions(
+                        grid_obs_only, position, action, per_env_context, shared_context
+                    ),
+                    original_grid,
+                ),
+                in_axes=(
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    per_env_in_axes,
+                    None,
+                ),  # grid, action, per_env_context, shared_context
+            )(
+                terminated,
+                grid_obs_only,
+                grid,
+                context["position"],
+                action,
+                per_env_context,
+                shared_context,
+            )
 
             for key in self.per_env_context_keys:
                 key_shape = context["per_env_context"][key].shape
-                # Add as many dimensions as needed after the batch dimension
                 expanded_terminated = terminated[
                     (...,) + (None,) * (len(key_shape) - 1)
                 ]
                 context["per_env_context"][key] = jnp.where(
-                    expanded_terminated,  # adjust broadcasting as needed
+                    expanded_terminated,
                     initial_context["per_env_context"][key],
                     context["per_env_context"][key],
                 )
-            obs = (grid, context)
+            obs = (next_grid, context)
             info["steps_elapsed"] = jnp.where(terminated, 0, info["steps_elapsed"])
             info["reward_accumulated"] = jnp.where(
                 terminated, 0.0, info["reward_accumulated"]
@@ -666,11 +855,11 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         grid_space = GridSpace(
             values = [  self._empty,   self._tree,   self._fire],
             probs  = [self._p_empty_init, self._p_tree_init,          0.0],
-            shape=(self.num_envs, self.nrows, self.ncols),
+            shape=(self.num_envs, self.nrows, self.ncols, len(EXTENSION_REGISTRY) + 2), # +2 for grid and position
         )
         # fmt: on
 
-        grid = jnp.array(grid_space.sample())
+        grid = jnp.array(grid_space.sample(), dtype=jnp.float32)
 
         # Fire Position
         # Around the lower left quadrant for each env
@@ -689,14 +878,15 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
                     c = (1 * self.ncols // 4) + self._noise(self.ncols)
                     self._pos_fire.append((r, c))
 
+        fire_age = self._fire_age
         for env in range(self.num_envs):
             r, c = self._pos_fire[env]
             grid = grid.at[env, r, c].set(self._fire)
-            self._fire_age = self._fire_age.at[env, r, c].set(10)
+            fire_age = fire_age.at[env, r, c].set(10)
 
-        return jnp.array(grid, dtype=jnp.int32)
+        return jnp.array(grid), fire_age
 
-    def _initial_context_distribution(self):
+    def _initial_context_distribution(self, fire_age):
         init_time = jnp.zeros(self.num_envs)
 
         if self._pos_bull is None:
@@ -728,7 +918,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             "vegetation": self._vegitation,
             "altitude": self._altitude,
             "slope": self._slope,
-            "fire_age": self._fire_age,
+            "fire_age": fire_age,
             "key": new_keys,
         }
 
@@ -805,7 +995,12 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
     def _set_spaces(self):
         self.grid_space = GridSpace(
             values=[self._empty, self._tree, self._fire],
-            shape=(self.num_envs, self.nrows, self.ncols),
+            shape=(
+                self.num_envs,
+                self.nrows,
+                self.ncols,
+                len(EXTENSION_REGISTRY) + 2,
+            ),  # +2 for grid and position
         )
 
         # Create spaces for per-env context parameters
@@ -865,13 +1060,44 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
                 "time": self.time_space,
             }
         )
-
-        # RL spaces
         m, n = len(self._moves), len(self._shoots)
         self.action_space = spaces.MultiDiscrete(
             nvec=np.array([[m, n]] * self.num_envs),  # Shape becomes (num_envs, 2)
             dtype=TYPE_INT,
         )
+
+        self.extension_choices = ((len(EXTENSION_REGISTRY), 2),)
+        # Combined action space with extensions
+        extension_nvec = np.array([math.comb(n, k) for n, k in self.extension_choices])
+        action_nvec = np.array([m, n])
+
+        self.extension_space = spaces.MultiDiscrete(
+            nvec=np.array([math.comb(n, k) for n, k in self.extension_choices]),
+            dtype=TYPE_INT,
+        )
+
+        extension_nvec = np.array([math.comb(n, k) for n, k in self.extension_choices])
+        action_nvec = np.array([m, n])
+        self.total_action_space = spaces.MultiDiscrete(
+            nvec=[np.concatenate([action_nvec, extension_nvec])] * self.num_envs,
+            dtype=TYPE_INT,
+        )
+
+        # Create mappings between combinatorial IDs and individual indices
+        self._extension_id_to_binary = []
+        self._extension_binary_to_id = []
+
+        # For each (n,k) combination specification
+        self._extension_lookups = []
+        for n, k in self.extension_choices:
+            # Generate mappings for combinations up to size k
+            id_to_binary, binary_to_id = create_up_to_k_mappings(n, k)
+            self._extension_id_to_binary.append(id_to_binary)
+            self._extension_binary_to_id.append(binary_to_id)
+            self._extension_lookups.append(id_to_binary)
+
+        # Combined action space with extensions
+
         self.observation_space = spaces.Tuple((self.grid_space, self.context_space))
 
         # Suboperators Spaces
@@ -933,21 +1159,56 @@ class MDP(Operator):
 
     deterministic = False
 
-    def __init__(self, repeat_ca, move_modify, *args, **kwargs):
+    def __init__(self, repeat_ca, move_modify, extension_map, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
         self.repeat_ca = repeat_ca
         self.move_modify = move_modify
 
         self.suboperators = self.repeat_ca, self.move_modify
+        self.extension_map = extension_map
+
+    # Gym API
+    # step, reset & seed methods inherited from parent class
+    @partial(jax.jit, static_argnums=(0))
+    def build_observation_on_extensions(
+        self,
+        grid,
+        position,
+        actions,
+        per_env_context,
+        shared_context,
+    ):
+        # Initialize base channels
+        channels = [grid]  # Start with grid
+
+        # Add position channel
+        x_pos, y_pos = position[..., 0], position[..., 1]
+        pos_channel = jnp.zeros_like(grid)
+        pos_channel = pos_channel.at[x_pos, y_pos].set(1)
+        channels.append(pos_channel)
+        # Get extension channels using helper function
+        extension_channels = apply_extensions(
+            grid, actions, per_env_context, shared_context
+        )
+
+        # Concatenate all channels
+        observation = jnp.stack([*channels, *extension_channels], axis=-1)
+
+        return observation
 
     def update(self, grid, action, per_env_context, shared_context, position, time):
         # Combine per-environment and shared context parameters
+        basic_action = (action[0], action[1])
 
         grid, (next_per_env_context, time) = self.repeat_ca(
-            grid, action, per_env_context, shared_context, time
+            grid[:, :, 0], basic_action, per_env_context, shared_context, time
         )
 
-        grid, position = self.move_modify(grid, action, position)
+        grid, position = self.move_modify(grid, basic_action, position)
+
+        grid = self.build_observation_on_extensions(
+            grid, position, action, per_env_context, shared_context
+        )
 
         return grid, (next_per_env_context, position, time)
