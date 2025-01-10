@@ -32,13 +32,9 @@ def loss_printer(args):
 
 
 def debug_printer(args):
-    returns, values = args
-    print(
-        f"\nReturns - {returns}"
-    )
-    print(
-        f"Values  - min: {values}"
-    )
+    advantages, ratio = args
+    print(f"\nReturns - {advantages}")
+    print(f"Values  - min: {ratio}")
 
 
 padding_type = "SAME"
@@ -834,19 +830,20 @@ def run_rollout_loop(
         @jax.jit
         def ppo_loss(params, x, a, logp, mb_advantages, mb_returns):
             newlogprob, entropy, newvalue = get_action_and_value2(params, x, a)
-            # jax.debug.callback(
-            #     debug_printer,
-            #     (
-            #         jnp.array(
-            #             [
-            #                 mb_returns,
-            #                 newvalue,
-            #             ]
-            #         )
-            #     ),
-            # )
+
             logratio = newlogprob - logp
             ratio = jnp.exp(logratio)
+            jax.debug.callback(
+                debug_printer,
+                (
+                    jnp.array(
+                        [
+                            mb_advantages,
+                            ratio,
+                        ]
+                    )
+                ),
+            )
             approx_kl = ((ratio - 1) - logratio).mean()
 
             if args.norm_adv:
