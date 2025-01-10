@@ -955,10 +955,11 @@ def run_rollout_loop(
         postfix={
             "SPS": "0",
             "avg_return": "0.0",
-            "current_return": "0.0",
+            # "current_return": "0.0",
             "games_finished": 0,
             "avg_episode_length": "0.0",
             "avg_returned_episode_length": "0.0",
+            "avg_return_per_timestep": "0.0",
         },
     )
     storage_returns = []
@@ -1119,9 +1120,8 @@ def run_rollout_loop(
                 {
                     "SPS": sps,
                     "avg_return": f"{avg_episodic_return:.2f}",
-                    "current_return": f"{current_episodic_return:.2f}",
+                    # "current_return": f"{current_episodic_return:.2f}",
                     "games_finished": int(jax.device_get(total_finished)),
-                    "avg_episode_length": f"{avg_episode_length:.2f}",
                     "avg_returned_episode_length": f"{avg_returned_episode_length:.2f}",
                     "avg_return_per_timestep": f"{avg_episodic_return/max(avg_returned_episode_length, 1e-8):.4f}",
                 },
