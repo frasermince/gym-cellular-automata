@@ -575,7 +575,7 @@ def run_rollout_loop(
                     NamedSharding(mesh, P("devices", None)),
                 ),
                 logprobs=jax.device_put(
-                    jnp.zeros(((args.num_steps,) + env.action_space.shape)),
+                    jnp.zeros((args.num_steps,)),
                     NamedSharding(mesh, P("devices", None)),
                 ),
                 dones=jax.device_put(
@@ -618,7 +618,7 @@ def run_rollout_loop(
                 (args.num_steps,) + env.action_space.shape,
                 dtype=jnp.int32,
             ),
-            logprobs=jnp.zeros(((args.num_steps,) + env.action_space.shape)),
+            logprobs=jnp.zeros((args.num_steps,)),
             dones=jnp.zeros((args.num_steps, num_envs)),
             values=jnp.zeros((args.num_steps, num_envs)),
             advantages=jnp.zeros((args.num_steps, num_envs)),
@@ -659,6 +659,7 @@ def run_rollout_loop(
         actions, logprobs = jax.vmap(sample_action, in_axes=(1, 1), out_axes=1)(
             action_logits, u
         )
+        logprobs = logprobs.sum(axis=1).squeeze()
 
         value = critic.apply(agent_state.params["critic_params"], hidden)
 
@@ -696,8 +697,6 @@ def run_rollout_loop(
         hidden = network.apply(params["network_params"], grid, position)
         logits_set = actor.apply(params["actor_params"], hidden)
         # normalize the logits https://gregorygundersen.com/blog/2020/02/09/log-sum-exp/
-        entropies = []
-        logprobs = []
 
         def process_logits(logit, act):
             logprob = jax.nn.log_softmax(logit)[jnp.arange(act.shape[0]), act]
@@ -710,6 +709,7 @@ def run_rollout_loop(
         logprobs, entropies = jax.vmap(process_logits, in_axes=(1, 1), out_axes=1)(
             logits_set, action
         )
+        logprobs = logprobs.sum(axis=1).squeeze()
 
         value = critic.apply(params["critic_params"], hidden).squeeze()
         return logprobs, entropies, value
@@ -782,7 +782,7 @@ def run_rollout_loop(
         b_position_obs = storage.position_obs.reshape(
             (-1,) + env.observation_space[1]["position"].shape[1:]
         )
-        b_logprobs = storage.logprobs.reshape((-1,) + (env.action_space.shape[-1],))
+        b_logprobs = storage.logprobs.reshape((-1,))
         b_actions = storage.actions.reshape((-1,) + (env.action_space.shape[-1],))
         b_advantages = storage.advantages.reshape(-1)
         b_returns = storage.returns.reshape(-1)
@@ -830,9 +830,9 @@ def run_rollout_loop(
         @jax.jit
         def ppo_loss(params, x, a, logp, mb_advantages, mb_returns):
             newlogprob, entropy, newvalue = get_action_and_value2(params, x, a)
-
             logratio = newlogprob - logp
             ratio = jnp.exp(logratio)
+
             # jax.debug.callback(
             #     debug_printer,
             #     (
@@ -850,8 +850,6 @@ def run_rollout_loop(
                 mb_advantages = (mb_advantages - mb_advantages.mean()) / (
                     mb_advantages.std() + 1e-8
                 )
-
-            mb_advantages = mb_advantages[:, None]
 
             # Policy loss
             pg_loss1 = -mb_advantages * ratio
