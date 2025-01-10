@@ -22,19 +22,19 @@ from torch.utils.tensorboard import SummaryWriter
 from jax.experimental import host_callback
 
 
-def loss_printer(args):
-    v_loss = args[0]
-    if v_loss > 10000:
+def policy_printer(args):
+    policy_loss = args[0]
+    if policy_loss == 0.00:
         import pdb
 
         pdb.set_trace()
-    print(f"Value Loss: {v_loss:.2f}")
+    print(f"Policy Loss: {policy_loss:.2f}")
 
 
 def debug_printer(args):
-    advantages, ratio = args
-    print(f"\nReturns - {advantages}")
-    print(f"Values  - min: {ratio}")
+    newlogprob, logprob = args
+    print(f"\nNewlogprob - {newlogprob}")
+    print(f"Logprob  - min: {logprob}")
 
 
 padding_type = "SAME"
@@ -833,17 +833,17 @@ def run_rollout_loop(
 
             logratio = newlogprob - logp
             ratio = jnp.exp(logratio)
-            jax.debug.callback(
-                debug_printer,
-                (
-                    jnp.array(
-                        [
-                            jnp.repeat(mb_advantages[:, None], 2, axis=1),
-                            ratio,
-                        ]
-                    )
-                ),
-            )
+            # jax.debug.callback(
+            #     debug_printer,
+            #     (
+            #         jnp.array(
+            #             [
+            #                 newlogprob,
+            #                 logp,
+            #             ]
+            #         )
+            #     ),
+            # )
             approx_kl = ((ratio - 1) - logratio).mean()
 
             if args.norm_adv:
@@ -868,6 +868,17 @@ def run_rollout_loop(
             #     pg_loss2.reshape(pg_loss2.shape[:-2] + (-1,))
             # )
             pg_loss = jnp.maximum(pg_loss1, pg_loss2).mean()
+            # jax.debug.callback(
+            #     policy_printer,
+            #     (
+            #         jnp.array(
+            #             [
+            #                 pg_loss,
+            #             ]
+            #         )
+            #     ),
+            # )
+
             # jax.debug.visualize_array_sharding(
             #     pg_loss.reshape(pg_loss.shape[:-2] + (-1,))
             # )
