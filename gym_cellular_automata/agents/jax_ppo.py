@@ -727,7 +727,7 @@ def run_rollout_loop(
     ):
         storage = storage.replace(advantages=storage.advantages.at[:].set(0.0))
 
-        grid, context = env.observation_space.sample()
+        grid, context = next_obs
         network_output = network.apply(
             agent_state.params["network_params"],
             grid,
