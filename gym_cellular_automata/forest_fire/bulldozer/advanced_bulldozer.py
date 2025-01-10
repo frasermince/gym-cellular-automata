@@ -601,7 +601,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         # Current state reward (bounded [-1, 1])
         counts = self.count_cells(grid)
         state_reward = (
-            0.0 * counts[self._empty]
+            -0.2 * counts[self._empty]
             + 1.0 * counts[self._tree]
             + -1.0 * counts[self._fire]
         ) / total_cells
