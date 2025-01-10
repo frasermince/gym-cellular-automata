@@ -29,6 +29,10 @@ def loss_printer(args):
 
 def debug_printer(args):
     min_returns, max_returns, mean_returns, min_value, max_value, mean_value = args
+    if max_returns > 10000 or max_value > 10000:
+        import pdb
+
+        pdb.set_trace()
     print(
         f"\nReturns - min: {min_returns:.2f}, max: {max_returns:.2f}, mean: {mean_returns:.2f}"
     )
