@@ -82,21 +82,23 @@ def noop_fn(grid, per_env_context, shared_context):
 
 
 # Convert to tuple of ExtensionInfo objects, sorted by index
-EXTENSION_REGISTRY = tuple(
-    sorted(
-        [
-            ExtensionInfo(2, wind_fn),
-            ExtensionInfo(3, density_fn),
-            ExtensionInfo(4, vegetation_fn),
-            ExtensionInfo(5, altitude_fn),
-            ExtensionInfo(6, noop_fn),
-            ExtensionInfo(7, noop_fn),
-        ],
-        key=lambda x: x.index,
+EXTENSION_REGISTRY = [
+    tuple(
+        sorted(
+            [
+                ExtensionInfo(2, wind_fn),
+                ExtensionInfo(3, density_fn),
+                ExtensionInfo(4, vegetation_fn),
+                ExtensionInfo(5, altitude_fn),
+                ExtensionInfo(6, noop_fn),
+                ExtensionInfo(7, noop_fn),
+            ],
+            key=lambda x: x.index,
+        )
     )
-)
+]
 
-# EXTENSION_REGISTRY = tuple()
+EXTENSION_REGISTRY = []
 
 
 @jax.jit
@@ -1066,7 +1068,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             dtype=TYPE_INT,
         )
 
-        self.extension_choices = ((len(EXTENSION_REGISTRY), 2),)
+        self.extension_choices = tuple((len(ext), 2) for ext in EXTENSION_REGISTRY)
         # Combined action space with extensions
         extension_nvec = np.array([math.comb(n, k) for n, k in self.extension_choices])
         action_nvec = np.array([m, n])
