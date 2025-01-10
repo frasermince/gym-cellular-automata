@@ -560,74 +560,75 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             vegitations.append(plot_grid_attribute(self._vegitation[v], "Vegitation"))
         return vegitations
 
-    # def _award(self, grid):
-    #     #     """Reward Function
-
-    #     #     Negative Ratio of Burning Area per Total Flammable Area
-
-    #     #     -(f / (t + f))
-    #     #     Where:
-    #     #         t: tree cell counts
-    #     #         f: fire cell counts
-
-    #     #     Objective:
-    #     #     Keep as much forest as possible.
-
-    #     #     Advantages:
-    #     #     1. Easy to interpret.
-    #     #         + Percent of the forest lost at each step.
-    #     #     2. Terminate ASAP.
-    #     #         + As the reward is negative.
-    #     #     3. Built-in cost of action.
-    #     #         + The agent removes trees, this decreases the reward.
-    #     #     4. Shaped reward.
-    #     #         + Reward is given at each step.
-
-    #     #     Disadvantages:
-    #     #     1. Lack of experimental results.
-    #     #     2. Is it equivalent with Sparse Reward?
-
-    #     #     The sparse reward is alive trees at epidose's end:
-    #     #     t / (e + t + f)
-    #     #     """
-    #     counts = self.count_cells(grid)
-
-    #     t = counts[self._tree]
-    #     f = counts[self._fire]
-    #     return -(f / (t + f))
     def _award(self, prev_grid, grid):
-        total_cells = float(self.nrows * self.ncols)
+        #     """Reward Function
 
-        # Current state reward (bounded [-1, 1])
+        #     Negative Ratio of Burning Area per Total Flammable Area
+
+        #     -(f / (t + f))
+        #     Where:
+        #         t: tree cell counts
+        #         f: fire cell counts
+
+        #     Objective:
+        #     Keep as much forest as possible.
+
+        #     Advantages:
+        #     1. Easy to interpret.
+        #         + Percent of the forest lost at each step.
+        #     2. Terminate ASAP.
+        #         + As the reward is negative.
+        #     3. Built-in cost of action.
+        #         + The agent removes trees, this decreases the reward.
+        #     4. Shaped reward.
+        #         + Reward is given at each step.
+
+        #     Disadvantages:
+        #     1. Lack of experimental results.
+        #     2. Is it equivalent with Sparse Reward?
+
+        #     The sparse reward is alive trees at epidose's end:
+        #     t / (e + t + f)
+        #     """
         counts = self.count_cells(grid)
-        state_reward = (
-            -0.2 * counts[self._empty]
-            + 1.0 * counts[self._tree]
-            + -1.0 * counts[self._fire]
-        ) / total_cells
 
-        # Change-based rewards (each change is bounded [-1, 1])
-        prev_counts = self.count_cells(prev_grid)
-        fire_change = (counts[self._fire] - prev_counts[self._fire]) / total_cells
-        tree_change = (counts[self._tree] - prev_counts[self._tree]) / total_cells
-        empty_change = (counts[self._empty] - prev_counts[self._empty]) / total_cells
+        t = counts[self._tree]
+        f = counts[self._fire]
+        return -(f / (t + f))
 
-        # Scale factors for combining rewards
-        STATE_WEIGHT = 1.0
-        CHANGE_WEIGHT = 0.5
+    # def _award(self, prev_grid, grid):
+    #     total_cells = float(self.nrows * self.ncols)
 
-        reward = (
-            STATE_WEIGHT * state_reward  # [-1, 1]
-            # + CHANGE_WEIGHT
-            # * (
-            #     (-1.0 * fire_change)  # [-0.5, 0.5]
-            #     + (0.25 * tree_change)  # [-0.125, 0.125]
-            #     + (-0.05 * empty_change)  # [-0.025, 0.025]
-            # )
-            # + -0.01  # Time pressure
-        )
+    #     # Current state reward (bounded [-1, 1])
+    #     counts = self.count_cells(grid)
+    #     state_reward = (
+    #         -0.2 * counts[self._empty]
+    #         + 1.0 * counts[self._tree]
+    #         + -1.0 * counts[self._fire]
+    #     ) / total_cells
 
-        return reward
+    #     # Change-based rewards (each change is bounded [-1, 1])
+    #     prev_counts = self.count_cells(prev_grid)
+    #     fire_change = (counts[self._fire] - prev_counts[self._fire]) / total_cells
+    #     tree_change = (counts[self._tree] - prev_counts[self._tree]) / total_cells
+    #     empty_change = (counts[self._empty] - prev_counts[self._empty]) / total_cells
+
+    #     # Scale factors for combining rewards
+    #     STATE_WEIGHT = 1.0
+    #     CHANGE_WEIGHT = 0.5
+
+    #     reward = (
+    #         STATE_WEIGHT * state_reward  # [-1, 1]
+    #         # + CHANGE_WEIGHT
+    #         # * (
+    #         #     (-1.0 * fire_change)  # [-0.5, 0.5]
+    #         #     + (0.25 * tree_change)  # [-0.125, 0.125]
+    #         #     + (-0.05 * empty_change)  # [-0.025, 0.025]
+    #         # )
+    #         # + -0.01  # Time pressure
+    #     )
+
+    #     return reward
 
     # def _award(self, prev_grid, grid):
     #     prev_counts = self.count_cells(prev_grid)
