@@ -833,17 +833,17 @@ def run_rollout_loop(
 
             logratio = newlogprob - logp
             ratio = jnp.exp(logratio)
-            # jax.debug.callback(
-            #     debug_printer,
-            #     (
-            #         jnp.array(
-            #             [
-            #                 jnp.repeat(mb_advantages[:, None], 2, axis=1),
-            #                 ratio,
-            #             ]
-            #         )
-            #     ),
-            # )
+            jax.debug.callback(
+                debug_printer,
+                (
+                    jnp.array(
+                        [
+                            jnp.repeat(mb_advantages[:, None], 2, axis=1),
+                            ratio,
+                        ]
+                    )
+                ),
+            )
             approx_kl = ((ratio - 1) - logratio).mean()
 
             if args.norm_adv:
