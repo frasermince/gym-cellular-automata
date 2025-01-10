@@ -24,20 +24,20 @@ from jax.experimental import host_callback
 
 def loss_printer(args):
     v_loss = args[0]
+    if v_loss > 10000:
+        import pdb
+
+        pdb.set_trace()
     print(f"Value Loss: {v_loss:.2f}")
 
 
 def debug_printer(args):
-    min_returns, max_returns, mean_returns, min_value, max_value, mean_value = args
-    if max_returns > 10000 or max_value > 10000:
-        import pdb
-
-        pdb.set_trace()
+    returns, values = args
     print(
-        f"\nReturns - min: {min_returns:.2f}, max: {max_returns:.2f}, mean: {mean_returns:.2f}"
+        f"\nReturns - {returns}"
     )
     print(
-        f"Values  - min: {min_value:.2f}, max: {max_value:.2f}, mean: {mean_value:.2f}"
+        f"Values  - min: {values}"
     )
 
 
@@ -839,12 +839,8 @@ def run_rollout_loop(
                 (
                     jnp.array(
                         [
-                            mb_returns.min(),
-                            mb_returns.max(),
-                            mb_returns.mean(),
-                            newvalue.min(),
-                            newvalue.max(),
-                            newvalue.mean(),
+                            mb_returns,
+                            newvalue,
                         ]
                     )
                 ),
