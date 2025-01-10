@@ -851,7 +851,7 @@ def run_rollout_loop(
                     mb_advantages.std() + 1e-8
                 )
 
-            mb_advantages = mb_advantages[:, None, None]
+            mb_advantages = mb_advantages[:, None]
 
             # Policy loss
             pg_loss1 = -mb_advantages * ratio
