@@ -1009,12 +1009,12 @@ def run_rollout_loop(
         desc="Training",
         postfix={
             "SPS": "0",
-            "avg_return": "0.0",
+            # "avg_return": "0.0",
             # "current_return": "0.0",
             "games_finished": 0,
             "avg_episode_length": "0.0",
             # "avg_returned_episode_length": "0.0",
-            # "avg_return_per_timestep": "0.0",
+            "avg_return_per_timestep": "0.0",
             "recent_50_return": "0.0",
             "recent_50_length": "0.0",
         },
@@ -1189,11 +1189,11 @@ def run_rollout_loop(
             progress_bar.set_postfix(
                 {
                     "SPS": sps,
-                    "avg_return": f"{avg_episodic_return:.2f}",
+                    # "avg_return": f"{avg_episodic_return:.2f}",
                     # "current_return": f"{current_episodic_return:.2f}",
                     "games_finished": int(jax.device_get(total_finished)),
                     # "avg_returned_episode_length": f"{avg_returned_episode_length:.2f}",
-                    # "avg_return_per_timestep": f"{avg_episodic_return/max(avg_returned_episode_length, 1e-8):.4f}",
+                    "avg_return_per_timestep": f"{recent_avg_return/max(recent_avg_length, 1e-8):.4f}",
                     "recent_50_return": f"{recent_avg_return:.2f}",
                     "recent_50_length": f"{recent_avg_length:.2f}",
                 },
