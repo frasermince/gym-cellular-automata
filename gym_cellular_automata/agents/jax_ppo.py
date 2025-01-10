@@ -177,6 +177,7 @@ class Network(nn.Module):
         grid_features = nn.Dense(
             128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0)
         )(grid_features)
+        grid_features = nn.relu(grid_features)
         return grid_features
 
 
