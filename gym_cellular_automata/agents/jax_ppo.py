@@ -19,6 +19,23 @@ from jax.sharding import PartitionSpec as P, NamedSharding
 from flax.linen.initializers import constant, orthogonal
 from flax.training.train_state import TrainState
 from torch.utils.tensorboard import SummaryWriter
+from jax.experimental import host_callback
+
+
+def loss_printer(args):
+    v_loss = args[0]
+    print(f"Value Loss: {v_loss:.2f}")
+
+
+def debug_printer(args):
+    min_returns, max_returns, mean_returns, min_value, max_value, mean_value = args
+    print(
+        f"\nReturns - min: {min_returns:.2f}, max: {max_returns:.2f}, mean: {mean_returns:.2f}"
+    )
+    print(
+        f"Values  - min: {min_value:.2f}, max: {max_value:.2f}, mean: {mean_value:.2f}"
+    )
+
 
 padding_type = "SAME"
 # padding_type = "VALID"
@@ -813,6 +830,21 @@ def run_rollout_loop(
         @jax.jit
         def ppo_loss(params, x, a, logp, mb_advantages, mb_returns):
             newlogprob, entropy, newvalue = get_action_and_value2(params, x, a)
+            jax.debug.callback(
+                debug_printer,
+                (
+                    jnp.array(
+                        [
+                            mb_returns.min(),
+                            mb_returns.max(),
+                            mb_returns.mean(),
+                            newvalue.min(),
+                            newvalue.max(),
+                            newvalue.mean(),
+                        ]
+                    )
+                ),
+            )
             logratio = newlogprob - logp
             ratio = jnp.exp(logratio)
             approx_kl = ((ratio - 1) - logratio).mean()
@@ -845,6 +877,7 @@ def run_rollout_loop(
 
             # Value loss
             v_loss = 0.5 * ((newvalue - mb_returns) ** 2).mean()
+            jax.debug.callback(loss_printer, (v_loss,))
 
             entropy_loss = entropy.mean()
             loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef
