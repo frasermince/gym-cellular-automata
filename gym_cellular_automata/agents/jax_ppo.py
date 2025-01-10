@@ -834,17 +834,17 @@ def run_rollout_loop(
         @jax.jit
         def ppo_loss(params, x, a, logp, mb_advantages, mb_returns):
             newlogprob, entropy, newvalue = get_action_and_value2(params, x, a)
-            jax.debug.callback(
-                debug_printer,
-                (
-                    jnp.array(
-                        [
-                            mb_returns,
-                            newvalue,
-                        ]
-                    )
-                ),
-            )
+            # jax.debug.callback(
+            #     debug_printer,
+            #     (
+            #         jnp.array(
+            #             [
+            #                 mb_returns,
+            #                 newvalue,
+            #             ]
+            #         )
+            #     ),
+            # )
             logratio = newlogprob - logp
             ratio = jnp.exp(logratio)
             approx_kl = ((ratio - 1) - logratio).mean()
@@ -877,7 +877,7 @@ def run_rollout_loop(
 
             # Value loss
             v_loss = 0.5 * ((newvalue - mb_returns) ** 2).mean()
-            jax.debug.callback(loss_printer, (v_loss,))
+            # jax.debug.callback(loss_printer, (v_loss,))
 
             entropy_loss = entropy.mean()
             loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef
