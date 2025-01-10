@@ -247,6 +247,9 @@ class EpisodeStatistics:
     returned_episode_returns: jnp.array
     returned_episode_lengths: jnp.array
     amount_finished: jnp.array = 0
+    recent_returns: jnp.array = None  # Will be initialized later
+    recent_lengths: jnp.array = None  # Will be initialized later
+    recent_idx: jnp.array = 0
 
 
 def build_storage_return(storage, env):
@@ -334,6 +337,9 @@ def run_rollout_loop(
         episode_lengths=jnp.zeros(num_envs, dtype=jnp.int32),
         returned_episode_returns=jnp.zeros(num_envs, dtype=jnp.float32),
         returned_episode_lengths=jnp.zeros(num_envs, dtype=jnp.int32),
+        recent_returns=jnp.zeros(50, dtype=jnp.float32),
+        recent_lengths=jnp.zeros(50, dtype=jnp.int32),
+        recent_idx=jnp.array(0, dtype=jnp.int32),
     )
     # handle, recv, send, step_env = envs.xla()
 
@@ -350,6 +356,55 @@ def run_rollout_loop(
 
         new_episode_return = current_episode_stats.episode_returns + next_info["reward"]
         new_episode_length = current_episode_stats.episode_lengths + 1
+
+        # Update recent stats when episodes finish
+        def update_recent_stats(stats, returns, lengths, mask):
+            # Instead of using boolean indexing, we'll use a scan
+            num_finished = jnp.sum(mask)
+
+            def body_fun(carry, env_idx):
+                stats, returns, lengths, mask = carry
+                # Get the index of the next finished episode
+                new_idx = stats.recent_idx
+                new_returns = jnp.where(
+                    mask[env_idx],
+                    stats.recent_returns.at[new_idx].set(returns[env_idx]),
+                    stats.recent_returns,
+                )
+                new_lengths = jnp.where(
+                    mask[env_idx],
+                    stats.recent_lengths.at[new_idx].set(lengths[env_idx]),
+                    stats.recent_lengths,
+                )
+                new_idx = (new_idx + mask[env_idx].astype(jnp.int32)) % 50
+
+                return (
+                    (
+                        stats.replace(
+                            recent_returns=new_returns,
+                            recent_lengths=new_lengths,
+                            recent_idx=new_idx,
+                        ),
+                        returns,
+                        lengths,
+                        mask,
+                    ),
+                    None,
+                )
+
+            # Scan through all environments
+            (final_stats, _, _, _), _ = jax.lax.scan(
+                body_fun, (stats, returns, lengths, mask), jnp.arange(mask.shape[0])
+            )
+
+            return final_stats.replace(
+                recent_idx=(stats.recent_idx + num_finished) % 50
+            )
+
+        finished_mask = next_info["terminated"] + next_info["TimeLimit.truncated"]
+        current_episode_stats = update_recent_stats(
+            current_episode_stats, new_episode_return, new_episode_length, finished_mask
+        )
         episode_stats = current_episode_stats.replace(
             amount_finished=current_episode_stats.amount_finished
             + jnp.sum(next_info["terminated"]),
@@ -960,6 +1015,8 @@ def run_rollout_loop(
             "avg_episode_length": "0.0",
             "avg_returned_episode_length": "0.0",
             "avg_return_per_timestep": "0.0",
+            "recent_50_return": "0.0",
+            "recent_50_length": "0.0",
         },
     )
     storage_returns = []
@@ -1114,6 +1171,19 @@ def run_rollout_loop(
                 int(num_envs * args.num_steps / (time.time() - iteration_time_start)),
                 global_step,
             )
+            # Calculate recent statistics
+            recent_returns = jax.device_get(sharded_stats.recent_returns)
+            recent_lengths = jax.device_get(sharded_stats.recent_lengths)
+            recent_avg_return = (
+                np.mean(recent_returns[recent_returns != 0])
+                if np.any(recent_returns != 0)
+                else 0
+            )
+            recent_avg_length = (
+                np.mean(recent_lengths[recent_lengths != 0])
+                if np.any(recent_lengths != 0)
+                else 0
+            )
 
             # Update progress bar
             progress_bar.set_postfix(
@@ -1124,6 +1194,8 @@ def run_rollout_loop(
                     "games_finished": int(jax.device_get(total_finished)),
                     "avg_returned_episode_length": f"{avg_returned_episode_length:.2f}",
                     "avg_return_per_timestep": f"{avg_episodic_return/max(avg_returned_episode_length, 1e-8):.4f}",
+                    "recent_50_return": f"{recent_avg_return:.2f}",
+                    "recent_50_length": f"{recent_avg_length:.2f}",
                 },
                 refresh=True,
             )

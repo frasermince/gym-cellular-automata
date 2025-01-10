@@ -618,13 +618,13 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
 
         reward = (
             STATE_WEIGHT * state_reward  # [-1, 1]
-            + CHANGE_WEIGHT
-            * (
-                (-1.0 * fire_change)  # [-0.5, 0.5]
-                + (0.25 * tree_change)  # [-0.125, 0.125]
-                + (-0.05 * empty_change)  # [-0.025, 0.025]
-            )
-            + -0.01  # Time pressure
+            # + CHANGE_WEIGHT
+            # * (
+            #     (-1.0 * fire_change)  # [-0.5, 0.5]
+            #     + (0.25 * tree_change)  # [-0.125, 0.125]
+            #     + (-0.05 * empty_change)  # [-0.025, 0.025]
+            # )
+            # + -0.01  # Time pressure
         )
 
         return reward
