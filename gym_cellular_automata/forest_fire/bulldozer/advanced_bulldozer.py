@@ -561,53 +561,86 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         return vegitations
 
     # def _award(self, grid):
-    #     """Reward Function
+    #     #     """Reward Function
 
-    #     Negative Ratio of Burning Area per Total Flammable Area
+    #     #     Negative Ratio of Burning Area per Total Flammable Area
 
-    #     -(f / (t + f))
-    #     Where:
-    #         t: tree cell counts
-    #         f: fire cell counts
+    #     #     -(f / (t + f))
+    #     #     Where:
+    #     #         t: tree cell counts
+    #     #         f: fire cell counts
 
-    #     Objective:
-    #     Keep as much forest as possible.
+    #     #     Objective:
+    #     #     Keep as much forest as possible.
 
-    #     Advantages:
-    #     1. Easy to interpret.
-    #         + Percent of the forest lost at each step.
-    #     2. Terminate ASAP.
-    #         + As the reward is negative.
-    #     3. Built-in cost of action.
-    #         + The agent removes trees, this decreases the reward.
-    #     4. Shaped reward.
-    #         + Reward is given at each step.
+    #     #     Advantages:
+    #     #     1. Easy to interpret.
+    #     #         + Percent of the forest lost at each step.
+    #     #     2. Terminate ASAP.
+    #     #         + As the reward is negative.
+    #     #     3. Built-in cost of action.
+    #     #         + The agent removes trees, this decreases the reward.
+    #     #     4. Shaped reward.
+    #     #         + Reward is given at each step.
 
-    #     Disadvantages:
-    #     1. Lack of experimental results.
-    #     2. Is it equivalent with Sparse Reward?
+    #     #     Disadvantages:
+    #     #     1. Lack of experimental results.
+    #     #     2. Is it equivalent with Sparse Reward?
 
-    #     The sparse reward is alive trees at epidose's end:
-    #     t / (e + t + f)
-    #     """
+    #     #     The sparse reward is alive trees at epidose's end:
+    #     #     t / (e + t + f)
+    #     #     """
     #     counts = self.count_cells(grid)
 
     #     t = counts[self._tree]
     #     f = counts[self._fire]
     #     return -(f / (t + f))
-
     def _award(self, prev_grid, grid):
-        prev_counts = self.count_cells(prev_grid)
-        counts = self.count_cells(grid)
-        t = counts[self._tree]  # trees
-        f = counts[self._fire]  # fires
-        e = counts[self._empty]  # empty
-        total_cells = t + f + e
+        total_cells = float(self.nrows * self.ncols)
 
-        # Reward for preventing tree loss
-        tree_change = (counts[self._tree] - prev_counts[self._tree]) / total_cells
+        # Current state reward (bounded [-1, 1])
+        counts = self.count_cells(grid)
+        state_reward = (
+            0.0 * counts[self._empty]
+            + 1.0 * counts[self._tree]
+            + -1.0 * counts[self._fire]
+        ) / total_cells
+
+        # Change-based rewards (each change is bounded [-1, 1])
+        prev_counts = self.count_cells(prev_grid)
         fire_change = (counts[self._fire] - prev_counts[self._fire]) / total_cells
-        return tree_change * 5.0 + -fire_change * 10.0
+        tree_change = (counts[self._tree] - prev_counts[self._tree]) / total_cells
+        empty_change = (counts[self._empty] - prev_counts[self._empty]) / total_cells
+
+        # Scale factors for combining rewards
+        STATE_WEIGHT = 1.0
+        CHANGE_WEIGHT = 0.5
+
+        reward = (
+            STATE_WEIGHT * state_reward  # [-1, 1]
+            + CHANGE_WEIGHT
+            * (
+                (-1.0 * fire_change)  # [-0.5, 0.5]
+                + (0.25 * tree_change)  # [-0.125, 0.125]
+                + (-0.05 * empty_change)  # [-0.025, 0.025]
+            )
+            + -0.01  # Time pressure
+        )
+
+        return reward
+
+    # def _award(self, prev_grid, grid):
+    #     prev_counts = self.count_cells(prev_grid)
+    #     counts = self.count_cells(grid)
+    #     t = counts[self._tree]  # trees
+    #     f = counts[self._fire]  # fires
+    #     e = counts[self._empty]  # empty
+    #     total_cells = t + f + e
+
+    #     # Reward for preventing tree loss
+    #     tree_change = (counts[self._tree] - prev_counts[self._tree]) / total_cells
+    #     fire_change = (counts[self._fire] - prev_counts[self._fire]) / total_cells
+    #     return tree_change * 5.0 + -fire_change * 10.0
 
     def _is_done(self, grid):
         return jnp.invert(jnp.any(grid == self._fire))
