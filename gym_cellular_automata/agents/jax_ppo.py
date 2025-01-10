@@ -160,7 +160,9 @@ class Network(nn.Module):
         if self.log_grid_shapes:
             print(f"Grid features shape after flatten: {grid_features.shape}")
 
-        grid_features = nn.Dense(512)(grid_features)
+        grid_features = nn.Dense(
+            512, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0)
+        )(grid_features)
         grid_features = nn.relu(grid_features)
 
         # Combine features
@@ -192,9 +194,13 @@ class Actor(nn.Module):
 
     @nn.compact
     def __call__(self, x):
-        features = nn.Dense(64)(x)
+        features = nn.Dense(
+            64, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0)
+        )(x)
         features = nn.relu(features)
-        features = nn.Dense(64)(features)
+        features = nn.Dense(
+            64, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0)
+        )(features)
         features = nn.relu(features)
 
         max_dim = max(self.action_dims)
@@ -202,7 +208,9 @@ class Actor(nn.Module):
         # Create separate Dense layers for each action dimension
         logits = []
         for dim in self.action_dims:
-            head = nn.Dense(dim)(features)
+            head = nn.Dense(dim, kernel_init=orthogonal(0.01), bias_init=constant(0.0))(
+                features
+            )
             if max_dim > dim:
                 # This -1e10 and masking concerns me a little. Make sure this
                 # won't mess up action sampling.
