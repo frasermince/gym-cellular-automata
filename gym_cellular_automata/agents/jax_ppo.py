@@ -108,7 +108,14 @@ class Network(nn.Module):
             print(f"Initial grid shape: {grid.shape}")
             print(f"Initial position shape: {position.shape}")
 
+        batch_size = grid.shape[0]
+        height, width = grid.shape[1:3]
+        x_pos, y_pos = position[..., 0], position[..., 1]
+        pos_channel = jnp.zeros((batch_size, height, width, 1))
+        pos_channel = pos_channel.at[:, x_pos, y_pos, 0].set(1.0)
+
         grid = grid[..., None]
+        jnp.concatenate([grid, pos_channel], axis=-1)
         if self.log_grid_shapes:
             print(f"Grid shape after adding channel dim: {grid.shape}")
 
@@ -153,34 +160,24 @@ class Network(nn.Module):
         if self.log_grid_shapes:
             print(f"Grid features shape after flatten: {grid_features.shape}")
 
-        grid_features = nn.Dense(256)(grid_features)
-        if self.log_grid_shapes:
-            print(f"Grid features shape after dense: {grid_features.shape}")
+        grid_features = nn.Dense(512)(grid_features)
+        grid_features = nn.relu(grid_features)
+
+        # Combine features
+        # combined = jnp.concatenate([grid_features, position_features], axis=-1)
+        # if self.log_grid_shapes:
+        #     print(f"Combined features shape: {combined.shape}")
+
+        grid_features = nn.Dense(
+            256, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0)
+        )(grid_features)
 
         grid_features = nn.relu(grid_features)
 
-        # Process position input
-        position_features = nn.Dense(
-            256, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0)
-        )(position)
-        if self.log_grid_shapes:
-            print(f"Position features shape after dense: {position_features.shape}")
-
-        position_features = nn.relu(position_features)
-
-        # Combine features
-        combined = jnp.concatenate([grid_features, position_features], axis=-1)
-        if self.log_grid_shapes:
-            print(f"Combined features shape: {combined.shape}")
-
-        x = nn.Dense(512, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
-            combined
-        )
-        if self.log_grid_shapes:
-            print(f"Final features shape: {x.shape}")
-
-        x = nn.relu(x)
-        return x
+        grid_features = nn.Dense(
+            128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0)
+        )(grid_features)
+        return grid_features
 
 
 class Critic(nn.Module):
@@ -538,7 +535,9 @@ def run_rollout_loop(
                     NamedSharding(mesh, P("devices", None, None, None)),
                 ),
                 position_obs=jax.device_put(
-                    jnp.zeros((args.num_steps,) + context["position"].shape),
+                    jnp.zeros(
+                        (args.num_steps,) + context["position"].shape, dtype=jnp.int32
+                    ),
                     NamedSharding(mesh, P("devices", None)),
                 ),
                 contexts=contexts,
@@ -586,7 +585,9 @@ def run_rollout_loop(
             )
         storage = Storage(
             grid_obs=jnp.zeros((args.num_steps,) + grid.shape),
-            position_obs=jnp.zeros((args.num_steps,) + context["position"].shape),
+            position_obs=jnp.zeros(
+                (args.num_steps,) + context["position"].shape, dtype=jnp.int32
+            ),
             actions=jnp.zeros(
                 (args.num_steps,) + env.action_space.shape,
                 dtype=jnp.int32,
@@ -1017,6 +1018,10 @@ def run_rollout_loop(
             "avg_return_per_timestep": "0.0",
             "recent_50_return": "0.0",
             "recent_50_length": "0.0",
+            "value_loss": "0.0",
+            "policy_loss": "0.0",
+            "entropy_loss": "0.0",
+            "approx_kl": "0.0",
         },
     )
     storage_returns = []
@@ -1196,6 +1201,10 @@ def run_rollout_loop(
                     "avg_return_per_timestep": f"{recent_avg_return/max(recent_avg_length, 1e-8):.4f}",
                     "recent_50_return": f"{recent_avg_return:.2f}",
                     "recent_50_length": f"{recent_avg_length:.2f}",
+                    "value_loss": f"{v_loss.item():.4f}",
+                    "policy_loss": f"{pg_loss.item():.4f}",
+                    "entropy_loss": f"{entropy_loss.item():.4f}",
+                    "approx_kl": f"{approx_kl.item():.4f}",
                 },
                 refresh=True,
             )
