@@ -839,7 +839,7 @@ def run_rollout_loop(
                 approx_kl / num_minibatches,
             )
 
-        init_carry = (agent_state)
+        init_carry = agent_state
         (final_agent_state), (
             loss,
             pg_loss,
@@ -1054,6 +1054,36 @@ def run_rollout_loop(
                 jax.device_get(sharded_stats.returned_episode_lengths)
             )
 
+            # Add NaN checks here
+            def check_values(name, value):
+                if jnp.any(jnp.isnan(value)):
+                    print(f"WARNING: NaN detected in {name}")
+                    print(f"Value: {value}")
+                    # Could also save state for debugging
+                    with open(f"debug_nan_{name}_{iteration}.pkl", "wb") as f:
+                        pickle.dump(
+                            {
+                                "agent_state": agent_state,
+                                "storage": storage,
+                                "stats": episode_stats,
+                            },
+                            f,
+                        )
+                    return True
+                return False
+
+            has_nan = False
+            # Check key metrics
+            has_nan |= check_values("policy_loss", pg_loss)
+            has_nan |= check_values("value_loss", v_loss)
+            has_nan |= check_values("entropy_loss", entropy_loss)
+            has_nan |= check_values("approx_kl", approx_kl)
+            has_nan |= check_values("advantages", storage.advantages)
+            has_nan |= check_values("returns", storage.returns)
+
+            if has_nan:
+                print(f"NaN detected at iteration {iteration}")
+                break  # Or implement recovery logic
             # print("current:", sharded_stats.episode_lengths)
             # print("returned:", sharded_stats.returned_episode_lengths)
             # Record rewards and metrics
