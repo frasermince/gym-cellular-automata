@@ -107,10 +107,11 @@ def apply_extensions(grid, actions, per_env_context, shared_context):
     extension_channels = []
 
     # Process each extension in order
-    for ext_info in EXTENSION_REGISTRY:
-        result = ext_info.fn(grid, per_env_context, shared_context)
-        channel = jnp.where(actions[ext_info.index], result, jnp.zeros_like(result))
-        extension_channels.append(channel)
+    for reg in EXTENSION_REGISTRY:
+        for ext_info in reg:
+            result = ext_info.fn(grid, per_env_context, shared_context)
+            channel = jnp.where(actions[ext_info.index], result, jnp.zeros_like(result))
+            extension_channels.append(channel)
 
     return extension_channels
 
@@ -567,6 +568,9 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             self.repeater, self.move_modify, len(EXTENSION_REGISTRY), **self.MDP_space
         )
 
+    # def extension_lookups(self):
+    #     self._extension_lookups
+
     @partial(jax.jit, static_argnums=0)
     def stateless_step(self, action, obs, info):
         # MDP Transition
@@ -854,10 +858,12 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
 
     def _initial_grid_distribution(self):
         # fmt: off
+
+        total_extensions = sum(n for n, _ in self.extension_choices)
         grid_space = GridSpace(
             values = [  self._empty,   self._tree,   self._fire],
             probs  = [self._p_empty_init, self._p_tree_init,          0.0],
-            shape=(self.num_envs, self.nrows, self.ncols, len(EXTENSION_REGISTRY) + 2), # +2 for grid and position
+            shape=(self.num_envs, self.nrows, self.ncols, total_extensions + 2), # +2 for grid and position
         )
         # fmt: on
 
@@ -995,16 +1001,6 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         return wind
 
     def _set_spaces(self):
-        self.grid_space = GridSpace(
-            values=[self._empty, self._tree, self._fire],
-            shape=(
-                self.num_envs,
-                self.nrows,
-                self.ncols,
-                len(EXTENSION_REGISTRY) + 2,
-            ),  # +2 for grid and position
-        )
-
         # Create spaces for per-env context parameters
         self.per_env_context_space = {
             "wind_index": spaces.Box(
@@ -1078,11 +1074,19 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             dtype=TYPE_INT,
         )
 
-        extension_nvec = np.array([math.comb(n, k) for n, k in self.extension_choices])
-        action_nvec = np.array([m, n])
         self.total_action_space = spaces.MultiDiscrete(
             nvec=[np.concatenate([action_nvec, extension_nvec])] * self.num_envs,
             dtype=TYPE_INT,
+        )
+        total_extensions = sum(n for n, _ in self.extension_choices)
+        self.grid_space = GridSpace(
+            values=[self._empty, self._tree, self._fire],
+            shape=(
+                self.num_envs,
+                self.nrows,
+                self.ncols,
+                total_extensions + 2,
+            ),  # +2 for grid and position
         )
 
         # Create mappings between combinatorial IDs and individual indices
