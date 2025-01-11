@@ -105,6 +105,7 @@ def get_run(env: Env, actor):
         # if save_gif:
         #     env.render()
         action = actor(obs[0], obs[1]["position"])
+
         step_tuple = env.stateless_step(action, obs, info)
         (
             next_obs,
@@ -116,6 +117,7 @@ def get_run(env: Env, actor):
 
         new_episode_return = episode_stats.episode_returns + next_info["reward"]
         new_episode_length = episode_stats.episode_lengths + 1
+
         episode_stats = episode_stats.replace(
             episode_returns=(new_episode_return)
             * (1 - next_info["terminated"])
@@ -325,8 +327,6 @@ def generate_frames(
             current_episode_length = np.mean(
                 jax.device_get(episode_stats.episode_lengths)
             )
-            print(episode_stats.returned_episode_lengths)
-            print(reward)
             progress_bar.set_postfix(
                 {
                     "avg_episode_length": f"{avg_episode_length:.2f}",
@@ -472,7 +472,7 @@ def generate_gif_envs(args):
     if args.params:
         actor = load_actor(args.params, env)
     else:
-        actor = lambda x, y: env.action_space.sample()
+        actor = lambda x, y: env.total_action_space.sample()
 
     generate_frames(
         env,
