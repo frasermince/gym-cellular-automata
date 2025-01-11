@@ -54,5 +54,19 @@ class RepeatCAJax(Operator):
             lambda i, carry: _ca_step(carry),
             (grid, action, per_env_context, shared_context),
         )
+        new_per_env["current_day_length"] = (
+            new_per_env["current_day_length"] + reshaped_repeats
+        )
+
+        new_per_env["is_night"] = jnp.where(
+            new_per_env["current_day_length"] > shared_context["day_length"],
+            1 - new_per_env["is_night"],
+            new_per_env["is_night"],
+        )
+        new_per_env["current_day_length"] = jnp.where(
+            new_per_env["current_day_length"] > shared_context["day_length"],
+            0,
+            new_per_env["current_day_length"],
+        )
 
         return grid, (new_per_env, modf_accu_time)

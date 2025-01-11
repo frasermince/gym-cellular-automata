@@ -30,14 +30,61 @@ import itertools
 
 
 @flax.struct.dataclass
+class ExtensionRegistry:
+    extensions: tuple  # Tuple of ExtensionInfo objects
+    choose: int  # Maximum number of extensions that can be active simultaneously
+
+
+@flax.struct.dataclass
 class ExtensionInfo:
     index: int
     fn: Callable
+    skip_visibility: int = 0  # 0: apply visibility, 1: skip visibility
+    skip_blur: int = 0  # 0: apply blur, 1: skip blur
+
+
+@jax.jit
+def unblur_fn(grid, per_env_context, shared_context, skip_visibility=0, skip_blur=0):
+    """Show grid with specified transformation skips"""
+    return transform_grid(
+        grid, per_env_context, skip_visibility=skip_visibility, skip_blur=skip_blur
+    )
+
+
+@jax.jit
+def see_invisible_fires_fn(
+    grid, per_env_context, shared_context, skip_visibility=0, skip_blur=0
+):
+    """Show grid with specified transformation skips"""
+    return transform_grid(
+        grid, per_env_context, skip_visibility=skip_visibility, skip_blur=skip_blur
+    )
+
+
+EXTENSION_REGISTRY = [
+    ExtensionRegistry(
+        extensions=tuple(
+            sorted(
+                [
+                    ExtensionInfo(
+                        1, partial(unblur_fn, skip_visibility=0, skip_blur=1)
+                    ),  # Skip blur but keep visibility
+                    ExtensionInfo(
+                        2,
+                        partial(see_invisible_fires_fn, skip_visibility=1, skip_blur=0),
+                    ),  # Skip visibility but keep blur
+                ],
+                key=lambda x: x.index,
+            )
+        ),
+        choose=1,  # Allow only one extension to be active at a time
+    )
+]
 
 
 # TODO: confirm wind gradient looks sane
 @jax.jit
-def wind_fn(grid, per_env_context, shared_context):
+def wind_fn(grid, per_env_context, shared_context, skip_visibility=0, skip_blur=0):
     # Get wind probabilities for each environment
     wind_index = per_env_context["wind_index"]
 
@@ -62,54 +109,86 @@ def wind_fn(grid, per_env_context, shared_context):
 
 
 @jax.jit
-def density_fn(grid, per_env_context, shared_context):
+def density_fn(grid, per_env_context, shared_context, skip_visibility=0, skip_blur=0):
     return per_env_context["density"]
 
 
 @jax.jit
-def vegetation_fn(grid, per_env_context, shared_context):
+def vegetation_fn(
+    grid, per_env_context, shared_context, skip_visibility=0, skip_blur=0
+):
     return per_env_context["vegetation"]
 
 
 @jax.jit
-def altitude_fn(grid, per_env_context, shared_context):
+def altitude_fn(grid, per_env_context, shared_context, skip_visibility=0, skip_blur=0):
     return per_env_context["altitude"]
 
 
 @jax.jit
-def noop_fn(grid, per_env_context, shared_context):
+def noop_fn(grid, per_env_context, shared_context, skip_visibility=0, skip_blur=0):
     return jnp.zeros_like(grid)
 
 
-# Convert to tuple of ExtensionInfo objects, sorted by index
-EXTENSION_REGISTRY = [
-    tuple(
-        sorted(
-            [
-                ExtensionInfo(2, wind_fn),
-                ExtensionInfo(3, density_fn),
-                ExtensionInfo(4, vegetation_fn),
-                ExtensionInfo(5, altitude_fn),
-                ExtensionInfo(6, noop_fn),
-                ExtensionInfo(7, noop_fn),
-            ],
-            key=lambda x: x.index,
-        )
+@jax.jit
+def apply_visibility(grid, per_env_context):
+    """Hide fires during daytime"""
+    return jnp.where(
+        (grid == 25) & (per_env_context["is_night"] == 0),
+        0,  # Hide fires during day
+        grid,
     )
-]
 
-EXTENSION_REGISTRY = []
+
+@jax.jit
+def apply_blur(grid):
+    """Apply uniform blur transformation"""
+    # Normalize values
+    normalized = jnp.where(grid == 0, 0.0, jnp.where(grid == 3, 0.5, 1.0))
+
+    # Apply uniform blur
+    kernel = jnp.ones((3, 3)) / 9.0
+    padded = jnp.pad(normalized, ((1, 1), (1, 1)), mode="edge")
+    blurred = jnp.zeros_like(normalized)
+    for i in range(3):
+        for j in range(3):
+            blurred += (
+                kernel[i, j] * padded[i : i + grid.shape[0], j : j + grid.shape[1]]
+            )
+
+    # Map back to original values
+    return jnp.where(blurred < 1 / 3, 0, jnp.where(blurred < 2 / 3, 3, 25))
+
+
+@jax.jit
+def transform_grid(grid, per_env_context, skip_visibility=0, skip_blur=0):
+    """Apply sequence of transformations, conditionally based on skip flags
+    Args:
+        skip_visibility: int 0 or 1
+        skip_blur: int 0 or 1
+    """
+    # Use where instead of if statements
+    grid = jnp.where(skip_visibility, grid, apply_visibility(grid, per_env_context))
+
+    grid = jnp.where(skip_blur, grid, apply_blur(grid))
+
+    return grid
 
 
 @jax.jit
 def apply_extensions(grid, actions, per_env_context, shared_context):
-    """Helper function to apply each extension from the registry."""
+    """Apply extensions with their specified transformation skips"""
     extension_channels = []
 
-    # Process each extension in order
     for reg in EXTENSION_REGISTRY:
-        for ext_info in reg:
-            result = ext_info.fn(grid, per_env_context, shared_context)
+        for ext_info in reg.extensions:  # Access extensions through the registry object
+            transformed = transform_grid(
+                grid,
+                per_env_context,
+                skip_visibility=ext_info.skip_visibility,
+                skip_blur=ext_info.skip_blur,
+            )
+            result = ext_info.fn(transformed, per_env_context, shared_context)
             channel = jnp.where(actions[ext_info.index], result, jnp.zeros_like(result))
             extension_channels.append(channel)
 
@@ -364,7 +443,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
     @property
     def initial_state(self):
         self.grid, fire_age = self._initial_grid_distribution()
-        self.context = self._initial_context_distribution(fire_age)
+        self.context = self._initial_context_distribution(fire_age, self.grid)
 
         initial_state = self.grid, self.context
 
@@ -401,6 +480,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             "p_fire",  # Global probability parameters
             "p_tree",
             "p_wind_change",
+            "day_length",
         }
 
         self.per_env_context_keys = {
@@ -411,6 +491,9 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             "slope",
             "fire_age",
             "key",
+            "is_night",
+            "current_day_length",
+            "true_grid",
         }
 
         self.extension_map = [
@@ -576,6 +659,9 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         # MDP Transition
         grid, context = obs
 
+        # Use true grid from context if available, otherwise use grid
+        true_grid = context["per_env_context"].get("true_grid", grid[:, :, :, 0])
+
         shared_context = context["shared_context"]
         per_env_context = context["per_env_context"]
         per_env_in_axes = {k: 0 for k in self.per_env_context_keys}
@@ -583,7 +669,6 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         binary_actions = []
         for i, extension_lookup in enumerate(self._extension_lookups):
             extension_choice = action[:, non_comb_actions + i]
-            # Use jnp.take instead of dictionary lookup
             binary_action = jnp.take(extension_lookup, extension_choice, axis=0)
             binary_actions.append(binary_action)
 
@@ -596,7 +681,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         if len(binary_actions) > 0:
             full_actions = jnp.concat((full_actions, binary_actions), axis=-1)
 
-        next_grid, updated_context = jax.vmap(
+        (next_extended_grid, next_true_grid), updated_context = jax.vmap(
             self.MDP,
             in_axes=(
                 0,
@@ -607,7 +692,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
                 0,
             ),  # grid, action, per_env_context, shared_context
         )(
-            grid,
+            true_grid,
             full_actions,
             per_env_context,
             shared_context,
@@ -619,16 +704,16 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         context["position"] = next_position
         context["time"] = next_time
 
-        next_state = (next_grid, context)
+        next_state = (next_extended_grid, context)
 
         # Check for termination
-        next_done = jax.vmap(self._is_done, in_axes=0)(next_grid)
+        next_done = jax.vmap(self._is_done, in_axes=0)(next_true_grid)
 
         # Gym API Formatting
         obs = next_state
-        reward = jax.vmap(self._award, in_axes=(0, 0))(grid, next_grid)
+        reward = jax.vmap(self._award, in_axes=(0, 0))(true_grid, next_true_grid)
         terminated = next_done
-        truncated = jnp.full(grid.shape[0], False)
+        truncated = jnp.full(next_true_grid.shape[0], False)
         info["reward"] = reward
         info["terminated"] = terminated
         info["TimeLimit.truncated"] = truncated
@@ -660,7 +745,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
 
         return obs, info
 
-    @partial(jax.jit, static_argnums=(0,), static_argnames=("seed", "options"))
+    # @partial(jax.jit, static_argnums=(0,), static_argnames=("seed", "options"))
     def conditional_reset(
         self,
         step_tuple,
@@ -895,7 +980,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
 
         return jnp.array(grid), fire_age
 
-    def _initial_context_distribution(self, fire_age):
+    def _initial_context_distribution(self, fire_age, grid):
         init_time = jnp.zeros(self.num_envs)
 
         if self._pos_bull is None:
@@ -929,6 +1014,9 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             "slope": self._slope,
             "fire_age": fire_age,
             "key": new_keys,
+            "is_night": jnp.zeros(self.num_envs, dtype=jnp.int32),
+            "current_day_length": jnp.zeros(self.num_envs, dtype=jnp.int32),
+            "true_grid": grid[..., 0],
         }
 
         # Shared context parameters
@@ -937,6 +1025,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             "p_fire": jnp.array(self._p_fire, dtype=jnp.float32),
             "p_tree": jnp.array(self._p_tree, dtype=jnp.float32),
             "p_wind_change": jnp.array(self._p_wind_change, dtype=jnp.float32),
+            "day_length": 20,
         }
 
         init_context = {
@@ -1031,6 +1120,18 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
                 shape=(self.num_envs, self.nrows, self.ncols),
                 dtype=TYPE_BOX,
             ),
+            "current_day_length": spaces.Box(
+                0,
+                float("inf"),
+                shape=(self.num_envs,),
+                dtype=TYPE_BOX,
+            ),
+            "is_night": spaces.Box(
+                0,
+                1,
+                shape=(self.num_envs,),
+                dtype=TYPE_BOX,
+            ),
         }
 
         # Create spaces for shared context parameters
@@ -1039,6 +1140,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             "p_fire": spaces.Box(0.0, 1.0, shape=(), dtype=TYPE_BOX),
             "p_tree": spaces.Box(0.0, 1.0, shape=(), dtype=TYPE_BOX),
             "p_wind_change": spaces.Box(0.0, 1.0, shape=(), dtype=TYPE_BOX),
+            "day_length": spaces.Box(0.0, float("inf"), shape=(), dtype=TYPE_BOX),
         }
 
         self.position_space = spaces.Box(
@@ -1065,7 +1167,13 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             dtype=TYPE_INT,
         )
 
-        self.extension_choices = tuple((len(ext), 2) for ext in EXTENSION_REGISTRY)
+        # Create extension choices based on registry configuration
+        self.extension_choices = []
+        for reg in EXTENSION_REGISTRY:
+            n = len(reg.extensions)  # number of extensions
+            k = reg.choose  # how many can be chosen
+            self.extension_choices.append((n, k))
+
         # Combined action space with extensions
         extension_nvec = np.array([math.comb(n, k) for n, k in self.extension_choices])
         action_nvec = np.array([m, n])
@@ -1091,16 +1199,10 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         )
 
         # Create mappings between combinatorial IDs and individual indices
-        self._extension_id_to_binary = []
-        self._extension_binary_to_id = []
-
-        # For each (n,k) combination specification
         self._extension_lookups = []
         for n, k in self.extension_choices:
             # Generate mappings for combinations up to size k
-            id_to_binary, binary_to_id = create_up_to_k_mappings(n, k)
-            self._extension_id_to_binary.append(id_to_binary)
-            self._extension_binary_to_id.append(binary_to_id)
+            id_to_binary, _ = create_up_to_k_mappings(n, k)
             self._extension_lookups.append(id_to_binary)
 
         # Combined action space with extensions
@@ -1186,36 +1288,40 @@ class MDP(Operator):
         per_env_context,
         shared_context,
     ):
-        # Initialize base channels
-        channels = [grid]  # Start with grid
+        # Base observation with all transformations
+        transformed_grid = transform_grid(grid, per_env_context)
 
-        # Add position channel
+        # Base channels
+        channels = [transformed_grid]
+
+        # Position channel
         x_pos, y_pos = position[..., 0], position[..., 1]
         pos_channel = jnp.zeros_like(grid)
         pos_channel = pos_channel.at[x_pos, y_pos].set(1)
         channels.append(pos_channel)
-        # Get extension channels using helper function
+
+        # Extension channels
         extension_channels = apply_extensions(
             grid, actions, per_env_context, shared_context
         )
 
-        # Concatenate all channels
-        observation = jnp.stack([*channels, *extension_channels], axis=-1)
-
-        return observation
+        return jnp.stack([*channels, *extension_channels], axis=-1)
 
     def update(self, grid, action, per_env_context, shared_context, position, time):
         # Combine per-environment and shared context parameters
         basic_action = (action[0], action[1])
 
-        grid, (next_per_env_context, time) = self.repeat_ca(
-            grid[:, :, 0], basic_action, per_env_context, shared_context, time
+        grid, (next_per_env_context, next_time) = self.repeat_ca(
+            grid, basic_action, per_env_context, shared_context, time
         )
 
         grid, position = self.move_modify(grid, basic_action, position)
 
-        grid = self.build_observation_on_extensions(
+        # Store true grid state
+        next_per_env_context["true_grid"] = grid
+
+        extended_grid = self.build_observation_on_extensions(
             grid, position, action, per_env_context, shared_context
         )
 
-        return grid, (next_per_env_context, position, time)
+        return (extended_grid, grid), (next_per_env_context, position, next_time)
