@@ -132,7 +132,7 @@ def render(
     CELLS = [EMPTY, TREE, FIRE]
     NORM, CMAP = get_norm_cmap(CELLS, COLORS)
 
-    local_grid = moore_n(N_LOCAL, pos, grid, EMPTY)
+    local_grid = moore_n(N_LOCAL, pos, grid[:, :, 0], EMPTY)
     pos_fseed = pos_fire
 
     # Why two titles?
@@ -160,7 +160,7 @@ def render(
 
         plot_local(ax_lgrid, local_grid)
 
-        plot_global(ax_ggrid, grid, pos, pos_fseed)
+        plot_global(ax_ggrid, grid[:, :, 0], pos, pos_fseed)
 
         plot_gauge(ax_gauge, time)
 

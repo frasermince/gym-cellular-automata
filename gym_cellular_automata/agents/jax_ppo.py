@@ -220,7 +220,7 @@ class Actor(nn.Module):
             logits.append(head)
 
         # Handle "choose k" actions
-        if self.choose_k is not None:
+        if len(self.choose_k) > 0:
             for n, k in self.choose_k:
                 # Calculate number of possible combinations (n choose k)
                 num_combinations = sum(math.comb(n, i) for i in range(k + 1))
@@ -1273,9 +1273,7 @@ def load_actor(params_path: str, env):
     """
     # Initialize models
     network = Network()
-    actor = Actor(
-        action_dims=env.action_space.nvec[0], choose_k=[env.extension_choices]
-    )
+    actor = Actor(action_dims=env.action_space.nvec[0], choose_k=env.extension_choices)
 
     critic = Critic()
 
@@ -1362,9 +1360,10 @@ def load_actor(params_path: str, env):
         # Get action logits
         action_logits = actor.apply(restored_state["actor_params"], hidden)
 
-        # Sample action deterministically by taking argmax
-        actions = jnp.argmax(action_logits, axis=-1)
+        actions = []
+        for logits in action_logits:
+            actions.append(jnp.argmax(logits, axis=-1))
 
-        return actions
+        return jnp.expand_dims(jnp.concatenate(actions), axis=0)
 
     return get_action

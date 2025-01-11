@@ -136,7 +136,7 @@ def get_run(env: Env, actor):
             ),
         )
         new_episode_return = episode_stats.episode_returns + next_info["reward"]
-        step_tuple = env.conditional_reset(step_tuple)
+        step_tuple = env.conditional_reset(step_tuple, action)
         return step_tuple, episode_stats
 
     return run
@@ -241,8 +241,8 @@ def save_frames_and_plots(
     if parallel:
         chunk_size = 100
         # processed_frames = []
-        for i in range(0, len(flat_frames), chunk_size):
-            with Pool(processes=n_processes) as pool:
+        with Pool(processes=n_processes) as pool:
+            for i in range(0, len(flat_frames), chunk_size):
                 chunk = flat_frames[i : i + chunk_size]
                 chunk_processed = list(
                     tqdm(
