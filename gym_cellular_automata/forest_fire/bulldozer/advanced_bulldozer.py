@@ -591,9 +591,10 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             binary_actions = jnp.concatenate(binary_actions, axis=-1)
 
         non_comb_actions = self.action_space.shape[-1]
-        full_actions = jnp.concat(
-            (action[:, :non_comb_actions], binary_actions), axis=-1
-        )
+        full_actions = action[:, :non_comb_actions]
+
+        if len(binary_actions) > 0:
+            full_actions = jnp.concat((full_actions, binary_actions), axis=-1)
 
         next_grid, updated_context = jax.vmap(
             self.MDP,
