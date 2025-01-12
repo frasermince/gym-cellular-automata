@@ -745,7 +745,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
 
         return full_actions
 
-    # @partial(jax.jit, static_argnums=0)
+    @partial(jax.jit, static_argnums=0)
     def stateless_step(self, action, obs, info):
         # MDP Transition
         grid, context = obs
