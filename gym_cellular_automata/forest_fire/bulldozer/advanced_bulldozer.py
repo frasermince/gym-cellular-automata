@@ -196,15 +196,6 @@ def _generate_extension_functions():
 
             extension_fns.append(make_fn(ext_info))
 
-    # Add noop function at index 0 if needed
-    if 0 not in [ext.index for reg in EXTENSION_REGISTRY for ext in reg.extensions]:
-
-        @jax.jit
-        def noop(transformed_grid, per_env_context, shared_context):
-            return jnp.zeros_like(transformed_grid)
-
-        extension_fns.insert(0, noop)
-
     return extension_fns
 
 
@@ -247,21 +238,20 @@ def apply_extensions(grid, actions, per_env_context, shared_context, enable_exte
     )
 
     # Create function to apply single extension
-    def apply_single_extension(transformed_grid, ext_idx):
+
+    def apply_single_extension(transformed_grid, ext_idx, action_slice):
         # Apply the selected extension function
         result = apply_extension_fn(
             ext_idx, transformed_grid, per_env_context, shared_context
         )
 
-        return jnp.where(
-            enable_extensions & actions[ext_idx], result, jnp.zeros_like(grid)
-        )
+        return jnp.where(enable_extensions & action_slice, result, jnp.zeros_like(grid))
 
     # Apply all extensions in parallel using vmap
     extension_channels = jax.vmap(
         apply_single_extension,
-        in_axes=(0, 0),  # Map over transformed_grids and extension_indices
-    )(transformed_grids, extension_indices)
+        in_axes=(0, 0, 0),  # Map over transformed_grids and extension_indices
+    )(transformed_grids, extension_indices, actions[..., 2:])
 
     return extension_channels
 
@@ -731,7 +721,31 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
     # def extension_lookups(self):
     #     self._extension_lookups
 
-    @partial(jax.jit, static_argnums=0)
+    def _create_full_actions(self, action):
+        """Create full actions by combining base actions with binary extension actions"""
+        non_comb_actions = self.action_space.shape[-1]
+        binary_actions = []
+
+        # Convert extension choices to binary actions
+        for i, extension_lookup in enumerate(self._extension_lookups):
+            extension_choice = action[:, non_comb_actions + i]
+            binary_action = jnp.take(extension_lookup, extension_choice, axis=0)
+            binary_actions.append(binary_action)
+
+        # Concatenate binary actions if they exist
+        if binary_actions:
+            binary_actions = jnp.concatenate(binary_actions, axis=-1)
+
+        # Get base actions
+        full_actions = action[:, :non_comb_actions]
+
+        # Combine with binary actions if they exist
+        if len(binary_actions) > 0:
+            full_actions = jnp.concatenate((full_actions, binary_actions), axis=-1)
+
+        return full_actions
+
+    # @partial(jax.jit, static_argnums=0)
     def stateless_step(self, action, obs, info):
         # MDP Transition
         grid, context = obs
@@ -742,21 +756,9 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         shared_context = context["shared_context"]
         per_env_context = context["per_env_context"]
         per_env_in_axes = {k: 0 for k in self.per_env_context_keys}
-        non_comb_actions = self.action_space.shape[-1]
-        binary_actions = []
-        for i, extension_lookup in enumerate(self._extension_lookups):
-            extension_choice = action[:, non_comb_actions + i]
-            binary_action = jnp.take(extension_lookup, extension_choice, axis=0)
-            binary_actions.append(binary_action)
 
-        if binary_actions:
-            binary_actions = jnp.concatenate(binary_actions, axis=-1)
-
-        non_comb_actions = self.action_space.shape[-1]
-        full_actions = action[:, :non_comb_actions]
-
-        if len(binary_actions) > 0:
-            full_actions = jnp.concat((full_actions, binary_actions), axis=-1)
+        # Create full actions including extensions
+        full_actions = self._create_full_actions(action)
 
         (next_extended_grid, next_true_grid), updated_context = jax.vmap(
             self.MDP,
@@ -843,6 +845,9 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             per_env_context = context["per_env_context"]
             per_env_in_axes = {k: 0 for k in self.per_env_context_keys}
 
+            # Create full actions including extensions
+            full_actions = self._create_full_actions(action)
+
             next_grid = jax.vmap(
                 lambda terminated, grid_obs_only, original_grid, position, action, per_env_context, shared_context: jnp.where(
                     terminated,
@@ -865,7 +870,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
                 grid_obs_only,
                 grid,
                 context["position"],
-                action,
+                full_actions,
                 per_env_context,
                 shared_context,
             )
@@ -1252,7 +1257,12 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             self.extension_choices.append((n, k))
 
         # Combined action space with extensions
-        extension_nvec = np.array([math.comb(n, k) for n, k in self.extension_choices])
+        extension_nvec = np.array(
+            [
+                sum(math.comb(n, i) for i in range(k + 1))
+                for n, k in self.extension_choices
+            ]
+        )
         action_nvec = np.array([m, n])
 
         self.extension_space = spaces.MultiDiscrete(
