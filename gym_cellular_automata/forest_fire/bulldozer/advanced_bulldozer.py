@@ -43,45 +43,6 @@ class ExtensionInfo:
     skip_blur: int = 0  # 0: apply blur, 1: skip blur
 
 
-@jax.jit
-def unblur_fn(grid, per_env_context, shared_context, skip_visibility=0, skip_blur=0):
-    """Show grid with specified transformation skips"""
-    return transform_grid(
-        grid, per_env_context, skip_visibility=skip_visibility, skip_blur=skip_blur
-    )
-
-
-@jax.jit
-def see_invisible_fires_fn(
-    grid, per_env_context, shared_context, skip_visibility=0, skip_blur=0
-):
-    """Show grid with specified transformation skips"""
-    return transform_grid(
-        grid, per_env_context, skip_visibility=skip_visibility, skip_blur=skip_blur
-    )
-
-
-EXTENSION_REGISTRY = [
-    ExtensionRegistry(
-        extensions=tuple(
-            sorted(
-                [
-                    ExtensionInfo(
-                        1, partial(unblur_fn, skip_visibility=0, skip_blur=1)
-                    ),  # Skip blur but keep visibility
-                    ExtensionInfo(
-                        2,
-                        partial(see_invisible_fires_fn, skip_visibility=1, skip_blur=0),
-                    ),  # Skip visibility but keep blur
-                ],
-                key=lambda x: x.index,
-            )
-        ),
-        choose=1,  # Allow only one extension to be active at a time
-    )
-]
-
-
 # TODO: confirm wind gradient looks sane
 @jax.jit
 def wind_fn(grid, per_env_context, shared_context, skip_visibility=0, skip_blur=0):
@@ -131,6 +92,45 @@ def noop_fn(grid, per_env_context, shared_context, skip_visibility=0, skip_blur=
 
 
 @jax.jit
+def unblur_fn(grid, per_env_context, shared_context, skip_visibility=0, skip_blur=0):
+    """Show grid with specified transformation skips"""
+    return transform_grid(
+        grid, per_env_context, skip_visibility=skip_visibility, skip_blur=skip_blur
+    )
+
+
+@jax.jit
+def see_invisible_fires_fn(
+    grid, per_env_context, shared_context, skip_visibility=0, skip_blur=0
+):
+    """Show grid with specified transformation skips"""
+    return transform_grid(
+        grid, per_env_context, skip_visibility=skip_visibility, skip_blur=skip_blur
+    )
+
+
+EXTENSION_REGISTRY = [
+    ExtensionRegistry(
+        extensions=tuple(
+            sorted(
+                [
+                    ExtensionInfo(
+                        0, partial(unblur_fn, skip_visibility=0, skip_blur=1)
+                    ),  # Skip blur but keep visibility
+                    ExtensionInfo(
+                        1,
+                        partial(see_invisible_fires_fn, skip_visibility=1, skip_blur=0),
+                    ),  # Skip visibility but keep blur
+                ],
+                key=lambda x: x.index,
+            )
+        ),
+        choose=1,  # Allow only one extension to be active at a time
+    )
+]
+
+
+@jax.jit
 def apply_visibility(grid, per_env_context):
     """Hide fires during daytime"""
     return jnp.where(
@@ -175,27 +175,93 @@ def transform_grid(grid, per_env_context, skip_visibility=0, skip_blur=0):
     return grid
 
 
+# Pre-generate extension functions at module level
+def _generate_extension_functions():
+    extension_fns = []
+    for reg in EXTENSION_REGISTRY:
+        for ext_info in sorted(reg.extensions, key=lambda x: x.index):
+
+            def make_fn(info):
+                @jax.jit
+                def fn(transformed_grid, per_env_context, shared_context):
+                    return info.fn(
+                        transformed_grid,
+                        per_env_context,
+                        shared_context,
+                        skip_visibility=info.skip_visibility,
+                        skip_blur=info.skip_blur,
+                    )
+
+                return fn
+
+            extension_fns.append(make_fn(ext_info))
+
+    # Add noop function at index 0 if needed
+    if 0 not in [ext.index for reg in EXTENSION_REGISTRY for ext in reg.extensions]:
+
+        @jax.jit
+        def noop(transformed_grid, per_env_context, shared_context):
+            return jnp.zeros_like(transformed_grid)
+
+        extension_fns.insert(0, noop)
+
+    return extension_fns
+
+
+EXTENSION_FNS = _generate_extension_functions()
+
+
+@jax.jit
+def apply_extension_fn(fn_idx, transformed_grid, per_env_context, shared_context):
+    """Apply a specific extension function based on index"""
+    return jax.lax.switch(
+        fn_idx,
+        [
+            partial(fn, transformed_grid, per_env_context, shared_context)
+            for fn in EXTENSION_FNS
+        ],
+    )
+
+
 @jax.jit
 def apply_extensions(grid, actions, per_env_context, shared_context, enable_extensions):
-    """Apply extensions with their specified transformation skips"""
-    extension_channels = []
+    """Apply extensions with their specified transformation skips using JAX control flow"""
 
-    for reg in EXTENSION_REGISTRY:
-        for ext_info in reg.extensions:  # Access extensions through the registry object
-            transformed = transform_grid(
+    # Pre-compute all transformed grids
+    transformed_grids = jnp.stack(
+        [
+            transform_grid(
                 grid,
                 per_env_context,
                 skip_visibility=ext_info.skip_visibility,
                 skip_blur=ext_info.skip_blur,
             )
-            result = ext_info.fn(transformed, per_env_context, shared_context)
-            extension_channels.append(
-                jnp.where(
-                    enable_extensions & actions[ext_info.index],
-                    result,
-                    jnp.zeros_like(grid),
-                )
-            )
+            for reg in EXTENSION_REGISTRY
+            for ext_info in reg.extensions
+        ]
+    )
+
+    # Pre-compute extension indices
+    extension_indices = jnp.array(
+        [ext_info.index for reg in EXTENSION_REGISTRY for ext_info in reg.extensions]
+    )
+
+    # Create function to apply single extension
+    def apply_single_extension(transformed_grid, ext_idx):
+        # Apply the selected extension function
+        result = apply_extension_fn(
+            ext_idx, transformed_grid, per_env_context, shared_context
+        )
+
+        return jnp.where(
+            enable_extensions & actions[ext_idx], result, jnp.zeros_like(grid)
+        )
+
+    # Apply all extensions in parallel using vmap
+    extension_channels = jax.vmap(
+        apply_single_extension,
+        in_axes=(0, 0),  # Map over transformed_grids and extension_indices
+    )(transformed_grids, extension_indices)
 
     return extension_channels
 
@@ -852,41 +918,41 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             vegitations.append(plot_grid_attribute(self._vegitation[v], "Vegitation"))
         return vegitations
 
-    def _award(self, prev_grid, grid):
-        #     """Reward Function
+    # def _award(self, prev_grid, grid):
+    #     #     """Reward Function
 
-        #     Negative Ratio of Burning Area per Total Flammable Area
+    #     #     Negative Ratio of Burning Area per Total Flammable Area
 
-        #     -(f / (t + f))
-        #     Where:
-        #         t: tree cell counts
-        #         f: fire cell counts
+    #     #     -(f / (t + f))
+    #     #     Where:
+    #     #         t: tree cell counts
+    #     #         f: fire cell counts
 
-        #     Objective:
-        #     Keep as much forest as possible.
+    #     #     Objective:
+    #     #     Keep as much forest as possible.
 
-        #     Advantages:
-        #     1. Easy to interpret.
-        #         + Percent of the forest lost at each step.
-        #     2. Terminate ASAP.
-        #         + As the reward is negative.
-        #     3. Built-in cost of action.
-        #         + The agent removes trees, this decreases the reward.
-        #     4. Shaped reward.
-        #         + Reward is given at each step.
+    #     #     Advantages:
+    #     #     1. Easy to interpret.
+    #     #         + Percent of the forest lost at each step.
+    #     #     2. Terminate ASAP.
+    #     #         + As the reward is negative.
+    #     #     3. Built-in cost of action.
+    #     #         + The agent removes trees, this decreases the reward.
+    #     #     4. Shaped reward.
+    #     #         + Reward is given at each step.
 
-        #     Disadvantages:
-        #     1. Lack of experimental results.
-        #     2. Is it equivalent with Sparse Reward?
+    #     #     Disadvantages:
+    #     #     1. Lack of experimental results.
+    #     #     2. Is it equivalent with Sparse Reward?
 
-        #     The sparse reward is alive trees at epidose's end:
-        #     t / (e + t + f)
-        #     """
-        counts = self.count_cells(grid)
+    #     #     The sparse reward is alive trees at epidose's end:
+    #     #     t / (e + t + f)
+    #     #     """
+    #     counts = self.count_cells(grid)
 
-        t = counts[self._tree]
-        f = counts[self._fire]
-        return -(f / (t + f))
+    #     t = counts[self._tree]
+    #     f = counts[self._fire]
+    #     return -(f / (t + f))
 
     # def _award(self, prev_grid, grid):
     #     total_cells = float(self.nrows * self.ncols)
@@ -922,18 +988,18 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
 
     #     return reward
 
-    # def _award(self, prev_grid, grid):
-    #     prev_counts = self.count_cells(prev_grid)
-    #     counts = self.count_cells(grid)
-    #     t = counts[self._tree]  # trees
-    #     f = counts[self._fire]  # fires
-    #     e = counts[self._empty]  # empty
-    #     total_cells = t + f + e
+    def _award(self, prev_grid, grid):
+        prev_counts = self.count_cells(prev_grid)
+        counts = self.count_cells(grid)
+        t = counts[self._tree]  # trees
+        f = counts[self._fire]  # fires
+        e = counts[self._empty]  # empty
+        total_cells = t + f + e
 
-    #     # Reward for preventing tree loss
-    #     tree_change = (counts[self._tree] - prev_counts[self._tree]) / total_cells
-    #     fire_change = (counts[self._fire] - prev_counts[self._fire]) / total_cells
-    #     return tree_change * 5.0 + -fire_change * 10.0
+        # Reward for preventing tree loss
+        tree_change = (counts[self._tree] - prev_counts[self._tree]) / total_cells
+        fire_change = (counts[self._fire] - prev_counts[self._fire]) / total_cells
+        return tree_change * 5.0 + -fire_change * 10.0
 
     def _is_done(self, grid):
         return jnp.invert(jnp.any(grid == self._fire))
