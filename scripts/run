@@ -291,6 +291,7 @@ def generate_frames(
     key=jax.random.key(0),
     device=0,
     learning_rate=2.5e-4,
+    track=False,
 ):
     import time
 
@@ -406,6 +407,7 @@ def generate_frames(
                 key=key,
                 learning_rate=learning_rate,
                 device_index=device,
+                track=track,
             )
         # grid_obs shape is (time, env, height, width)
         frames_per_game = []
@@ -495,6 +497,7 @@ def generate_gif_envs(args):
         key=subkey,
         device=int(args.device),
         learning_rate=float(args.learning_rate),
+        track=args.track,
     )
 
 
@@ -565,6 +568,7 @@ parser.add_argument("--params")
 parser.add_argument("--key", default="0")
 parser.add_argument("--learning-rate", default=2.5e-4)
 parser.add_argument("--enable-extensions", action="store_true")
+parser.add_argument("--track", action="store_true")
 
 if __name__ == "__main__":
     args = parser.parse_args()
