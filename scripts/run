@@ -107,7 +107,6 @@ def get_run(env: Env, actor):
         # if save_gif:
         #     env.render()
         action = actor(obs[0], obs[1]["position"])
-
         step_tuple = env.stateless_step(action, obs, info)
         (
             next_obs,
@@ -474,6 +473,7 @@ def generate_gif_envs(args):
         speed_act=0.03 * speed_multiplier,
         use_hidden=not args.no_hidden,
         middle_fire=True,
+        enable_extensions=args.enable_extensions,
     )
 
     if args.params:
@@ -564,6 +564,7 @@ parser.add_argument("--no-hidden", action="store_true")
 parser.add_argument("--params")
 parser.add_argument("--key", default="0")
 parser.add_argument("--learning-rate", default=2.5e-4)
+parser.add_argument("--enable-extensions", action="store_true")
 
 if __name__ == "__main__":
     args = parser.parse_args()

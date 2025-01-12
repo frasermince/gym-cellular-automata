@@ -176,7 +176,7 @@ def transform_grid(grid, per_env_context, skip_visibility=0, skip_blur=0):
 
 
 @jax.jit
-def apply_extensions(grid, actions, per_env_context, shared_context):
+def apply_extensions(grid, actions, per_env_context, shared_context, enable_extensions):
     """Apply extensions with their specified transformation skips"""
     extension_channels = []
 
@@ -189,8 +189,13 @@ def apply_extensions(grid, actions, per_env_context, shared_context):
                 skip_blur=ext_info.skip_blur,
             )
             result = ext_info.fn(transformed, per_env_context, shared_context)
-            channel = jnp.where(actions[ext_info.index], result, jnp.zeros_like(result))
-            extension_channels.append(channel)
+            extension_channels.append(
+                jnp.where(
+                    enable_extensions & actions[ext_info.index],
+                    result,
+                    jnp.zeros_like(grid),
+                )
+            )
 
     return extension_channels
 
@@ -468,12 +473,14 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         p_empty=0.10,
         use_hidden: bool = True,
         middle_fire: bool = False,
+        enable_extensions: bool = False,
         **kwargs,
     ):
         super().__init__(nrows, ncols, **kwargs)
         self.middle_fire = middle_fire
         self.use_hidden = use_hidden
         self.starting_key = key
+        self.transform_grid = len(EXTENSION_REGISTRY) > 0
 
         self.shared_context_keys = {
             "winds",  # Shared wind patterns
@@ -648,7 +655,11 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             self.ca, self.time_per_action, self.time_per_state, **self.repeater_space
         )
         self._MDP = MDP(
-            self.repeater, self.move_modify, len(EXTENSION_REGISTRY), **self.MDP_space
+            self.repeater,
+            self.move_modify,
+            self.transform_grid and enable_extensions,
+            enable_extensions,
+            **self.MDP_space,
         )
 
     # def extension_lookups(self):
@@ -1046,7 +1057,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         }
 
         self._movement_timings[self._moves["not_move"]] = self._t_act_move
-        self._shooting_timings[self._shoots["none"]] = self._t_act_none
+        self._shooting_timings[self._shoots["none"]] = self._t_act_shoot
         self._jax_movement_timings = jnp.array(
             [self._movement_timings[k] for k in sorted(self._movement_timings.keys())]
         )
@@ -1268,14 +1279,22 @@ class MDP(Operator):
 
     deterministic = False
 
-    def __init__(self, repeat_ca, move_modify, extension_map, *args, **kwargs):
+    def __init__(
+        self,
+        repeat_ca,
+        move_modify,
+        should_transform_grid,
+        enable_extensions,
+        *args,
+        **kwargs,
+    ):
         super().__init__(*args, **kwargs)
 
         self.repeat_ca = repeat_ca
         self.move_modify = move_modify
-
+        self.should_transform_grid = should_transform_grid
+        self.enable_extensions = enable_extensions
         self.suboperators = self.repeat_ca, self.move_modify
-        self.extension_map = extension_map
 
     # Gym API
     # step, reset & seed methods inherited from parent class
@@ -1289,7 +1308,10 @@ class MDP(Operator):
         shared_context,
     ):
         # Base observation with all transformations
-        transformed_grid = transform_grid(grid, per_env_context)
+        if self.should_transform_grid:
+            transformed_grid = transform_grid(grid, per_env_context)
+        else:
+            transformed_grid = grid
 
         # Base channels
         channels = [transformed_grid]
@@ -1302,10 +1324,11 @@ class MDP(Operator):
 
         # Extension channels
         extension_channels = apply_extensions(
-            grid, actions, per_env_context, shared_context
+            grid, actions, per_env_context, shared_context, self.enable_extensions
         )
+        channels = jnp.stack([*channels, *extension_channels], axis=-1)
 
-        return jnp.stack([*channels, *extension_channels], axis=-1)
+        return channels
 
     def update(self, grid, action, per_env_context, shared_context, position, time):
         # Combine per-environment and shared context parameters
