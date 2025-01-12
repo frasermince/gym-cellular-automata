@@ -311,7 +311,7 @@ def run_rollout_loop(
         orbax.checkpoint.args.StandardSave,
         orbax.checkpoint.StandardCheckpointHandler,
     )
-    if args.track:
+    if track:
         import wandb
 
         wandb.init(
