@@ -660,7 +660,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         grid, context = obs
 
         # Use true grid from context if available, otherwise use grid
-        true_grid = context["per_env_context"].get("true_grid", grid[:, :, :, 0])
+        true_grid = context["per_env_context"]["true_grid"]
 
         shared_context = context["shared_context"]
         per_env_context = context["per_env_context"]
@@ -1045,7 +1045,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             shoot: self._t_act_shoot for shoot in self._shoots.values()
         }
 
-        self._movement_timings[self._moves["not_move"]] = self._t_act_none
+        self._movement_timings[self._moves["not_move"]] = self._t_act_move
         self._shooting_timings[self._shoots["none"]] = self._t_act_none
         self._jax_movement_timings = jnp.array(
             [self._movement_timings[k] for k in sorted(self._movement_timings.keys())]

@@ -72,6 +72,7 @@ def process_single_frame(args, empty, tree, fire, title, pos_fires):
     game_idx = args["game_index"]
     frame_idx = args["frame_index"]
     cell_count = args["cell_count"]
+    is_night = args["is_night"]
     pos_fire = pos_fires[game_idx]
 
     # return make_frame_local(env, grid, time_per_frame, position, pos_fire, wind_index)
@@ -86,6 +87,7 @@ def process_single_frame(args, empty, tree, fire, title, pos_fires):
         cell_count,
         pos_fire,
         wind_index,
+        is_night,
     )
     # plt.close("all")
     return plot
@@ -337,10 +339,15 @@ def generate_frames(
             for game_index in range(next_local_obs[0].shape[0]):
                 frames_per_game[game_index].append(
                     {
-                        "grid": next_local_obs[0][game_index],
+                        "grid": next_local_obs[1]["per_env_context"]["true_grid"][
+                            game_index
+                        ],
                         "wind_index": next_local_obs[1]["per_env_context"][
                             "wind_index"
                         ][game_index],
+                        "is_night": next_local_obs[1]["per_env_context"]["is_night"][
+                            game_index
+                        ],
                         "time": next_local_obs[1]["time"][game_index],
                         "position": next_local_obs[1]["position"][game_index],
                         "frame_index": frame_index,

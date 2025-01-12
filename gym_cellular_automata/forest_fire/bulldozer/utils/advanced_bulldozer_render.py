@@ -36,9 +36,17 @@ TITLE_SIZE = 42
 TITLE_POS = {"x": 0.121, "y": 0.96}
 TITLE_ALIGN = "left"
 
-COLOR_EMPTY = "#DDD1D3"  # Gray
-COLOR_TREE = "#A9C499"  # Green
-COLOR_FIRE = "#E68181"  # Salmon-Red
+# Day colors
+COLOR_EMPTY_DAY = "#DDD1D3"  # Gray
+COLOR_TREE_DAY = "#A9C499"  # Green
+COLOR_FIRE_DAY = "#E68181"  # Salmon-Red
+COLOR_GAUGE_DAY = "#D4CCDB"  # Gray-Purple
+
+# Night colors
+COLOR_EMPTY_NIGHT = "#696969"  # Darker Gray
+COLOR_TREE_NIGHT = "#2F4F4F"  # Dark Green
+COLOR_FIRE_NIGHT = "#8B0000"  # Dark Red
+COLOR_GAUGE_NIGHT = "#483D8B"  # Dark Slate Blue
 
 # Local Grid
 N_LOCAL = 3  # n x n local grid size
@@ -49,7 +57,6 @@ MARKFSEED_SIZE = 62
 MARKLOCATION_SIZE = 62
 
 # Gauge
-COLOR_GAUGE = "#D4CCDB"  # "Gray-Purple"
 CYCLE_SYMBOL = "\U0001f504"
 CYCLE_SIZE = 32
 
@@ -121,18 +128,40 @@ def plot_grid_attribute(grid, attribute_name):
 
 
 def render(
-    empty, tree, fire, title, grid, time, pos, cell_count, pos_fire, wind_index=None
+    empty,
+    tree,
+    fire,
+    title,
+    grid,
+    time,
+    pos,
+    cell_count,
+    pos_fire,
+    wind_index=None,
+    is_night=0,
 ):
     EMPTY = empty
     TREE = tree
     FIRE = fire
+
+    # Select color scheme based on is_night
+    if is_night:
+        COLOR_EMPTY = COLOR_EMPTY_NIGHT
+        COLOR_TREE = COLOR_TREE_NIGHT
+        COLOR_FIRE = COLOR_FIRE_NIGHT
+        COLOR_GAUGE = COLOR_GAUGE_NIGHT
+    else:
+        COLOR_EMPTY = COLOR_EMPTY_DAY
+        COLOR_TREE = COLOR_TREE_DAY
+        COLOR_FIRE = COLOR_FIRE_DAY
+        COLOR_GAUGE = COLOR_GAUGE_DAY
 
     # Assumes that cells values are in ascending order and paired with its colors
     COLORS = [COLOR_EMPTY, COLOR_TREE, COLOR_FIRE]
     CELLS = [EMPTY, TREE, FIRE]
     NORM, CMAP = get_norm_cmap(CELLS, COLORS)
 
-    local_grid = moore_n(N_LOCAL, pos, grid[:, :, 0], EMPTY)
+    local_grid = moore_n(N_LOCAL, pos, grid, EMPTY)
     pos_fseed = pos_fire
 
     # Why two titles?
@@ -160,7 +189,7 @@ def render(
 
         plot_local(ax_lgrid, local_grid)
 
-        plot_global(ax_ggrid, grid[:, :, 0], pos, pos_fseed)
+        plot_global(ax_ggrid, grid, pos, pos_fseed)
 
         plot_gauge(ax_gauge, time)
 
