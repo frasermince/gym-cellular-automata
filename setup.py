@@ -13,7 +13,7 @@ from version import VERSION
 # pip install flax
 # pip install torch
 # pip install tensorboard
-
+# pip install wandb
 setup(
     name="gym_cellular_automata",
     packages=["gym_cellular_automata"],

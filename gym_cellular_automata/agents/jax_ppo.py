@@ -65,7 +65,7 @@ class Args:
     """if toggled, cuda will be enabled by default"""
     track: bool = False
     """if toggled, this experiment will be tracked with Weights and Biases"""
-    wandb_project_name: str = "firefighter"
+    wandb_project_name: str = "extended-mind"
     """the wandb's project name"""
     wandb_entity: str = "glen-berseth"
     """the entity (team) of wandb's project"""
