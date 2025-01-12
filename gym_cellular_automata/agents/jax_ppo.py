@@ -295,6 +295,7 @@ def run_rollout_loop(
     key=jax.random.key(0),
     learning_rate=2.5e-4,
     device_index=0,
+    track=False,
 ):
     args = Args()
     args.batch_size = int(num_envs * args.num_steps)
