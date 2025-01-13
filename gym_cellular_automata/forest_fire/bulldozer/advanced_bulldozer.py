@@ -936,41 +936,41 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             vegitations.append(plot_grid_attribute(self._vegitation[v], "Vegitation"))
         return vegitations
 
-    # def _award(self, prev_grid, grid):
-    #     #     """Reward Function
+    def _award(self, prev_grid, grid):
+        #     """Reward Function
 
-    #     #     Negative Ratio of Burning Area per Total Flammable Area
+        #     Negative Ratio of Burning Area per Total Flammable Area
 
-    #     #     -(f / (t + f))
-    #     #     Where:
-    #     #         t: tree cell counts
-    #     #         f: fire cell counts
+        #     -(f / (t + f))
+        #     Where:
+        #         t: tree cell counts
+        #         f: fire cell counts
 
-    #     #     Objective:
-    #     #     Keep as much forest as possible.
+        #     Objective:
+        #     Keep as much forest as possible.
 
-    #     #     Advantages:
-    #     #     1. Easy to interpret.
-    #     #         + Percent of the forest lost at each step.
-    #     #     2. Terminate ASAP.
-    #     #         + As the reward is negative.
-    #     #     3. Built-in cost of action.
-    #     #         + The agent removes trees, this decreases the reward.
-    #     #     4. Shaped reward.
-    #     #         + Reward is given at each step.
+        #     Advantages:
+        #     1. Easy to interpret.
+        #         + Percent of the forest lost at each step.
+        #     2. Terminate ASAP.
+        #         + As the reward is negative.
+        #     3. Built-in cost of action.
+        #         + The agent removes trees, this decreases the reward.
+        #     4. Shaped reward.
+        #         + Reward is given at each step.
 
-    #     #     Disadvantages:
-    #     #     1. Lack of experimental results.
-    #     #     2. Is it equivalent with Sparse Reward?
+        #     Disadvantages:
+        #     1. Lack of experimental results.
+        #     2. Is it equivalent with Sparse Reward?
 
-    #     #     The sparse reward is alive trees at epidose's end:
-    #     #     t / (e + t + f)
-    #     #     """
-    #     counts = self.count_cells(grid)
+        #     The sparse reward is alive trees at epidose's end:
+        #     t / (e + t + f)
+        #     """
+        counts = self.count_cells(grid)
 
-    #     t = counts[self._tree]
-    #     f = counts[self._fire]
-    #     return -(f / (t + f))
+        t = counts[self._tree]
+        f = counts[self._fire]
+        return -(f / (t + f))
 
     # def _award(self, prev_grid, grid):
     #     total_cells = float(self.nrows * self.ncols)
@@ -1018,32 +1018,32 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
     #     tree_change = (counts[self._tree] - prev_counts[self._tree]) / total_cells
     #     fire_change = (counts[self._fire] - prev_counts[self._fire]) / total_cells
     #     return tree_change * 5.0 + -fire_change * 10.0
-    def _award(self, prev_grid, grid):
-        ncells = grid.shape[0] * grid.shape[1]
+    # def _award(self, prev_grid, grid):
+    #     ncells = grid.shape[0] * grid.shape[1]
 
-        dict_counts = self.count_cells(grid)
+    #     dict_counts = self.count_cells(grid)
 
-        cell_counts = jnp.array(
-            [
-                dict_counts[self._empty],
-                dict_counts[self._tree],
-                dict_counts[self._fire],
-                dict_counts[self._bulldozed],
-            ]
-        )
+    #     cell_counts = jnp.array(
+    #         [
+    #             dict_counts[self._empty],
+    #             dict_counts[self._tree],
+    #             dict_counts[self._fire],
+    #             dict_counts[self._bulldozed],
+    #         ]
+    #     )
 
-        cell_counts_relative = cell_counts / ncells
+    #     cell_counts_relative = cell_counts / ncells
 
-        reward_weights = jnp.array(
-            [
-                self._reward_per_empty,
-                self._reward_per_tree,
-                self._reward_per_fire,
-                self._reward_per_bulldozed,
-            ]
-        )
+    #     reward_weights = jnp.array(
+    #         [
+    #             self._reward_per_empty,
+    #             self._reward_per_tree,
+    #             self._reward_per_fire,
+    #             self._reward_per_bulldozed,
+    #         ]
+    #     )
 
-        return jnp.dot(reward_weights, cell_counts_relative)
+    #     return jnp.dot(reward_weights, cell_counts_relative)
 
     def _is_done(self, grid):
         return jnp.invert(jnp.any(grid == self._fire))
