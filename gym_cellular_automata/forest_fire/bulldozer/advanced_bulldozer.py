@@ -1070,7 +1070,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         grid_space = GridSpace(
             values = [  self._empty,   self._tree,   self._fire],
             probs  = [self._p_empty_init, self._p_tree_init,          0.0],
-            shape=(self.num_envs, self.nrows, self.ncols, total_extensions + 2), # +2 for grid and position
+            shape=(self.num_envs, self.nrows, self.ncols, total_extensions + 3), # +3 for grid, position, and day night
         )
         # fmt: on
 
@@ -1320,8 +1320,8 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
                 self.num_envs,
                 self.nrows,
                 self.ncols,
-                total_extensions + 2,
-            ),  # +2 for grid and position
+                total_extensions + 3,
+            ),  # +3 for grid, position, and day night
         )
 
         # Create mappings between combinatorial IDs and individual indices
@@ -1436,7 +1436,11 @@ class MDP(Operator):
         x_pos, y_pos = position[..., 0], position[..., 1]
         pos_channel = jnp.zeros_like(grid)
         pos_channel = pos_channel.at[x_pos, y_pos].set(1)
+        day_night_channel = jnp.where(
+            per_env_context["is_night"], jnp.ones_like(grid), jnp.zeros_like(grid)
+        )
         channels.append(pos_channel)
+        channels.append(day_night_channel)
 
         # Extension channels
         extension_channels = apply_extensions(
