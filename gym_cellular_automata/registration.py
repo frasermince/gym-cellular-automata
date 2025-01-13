@@ -4,7 +4,10 @@ from gymnasium.envs.registration import register
 from gymnasium.spaces import flatten
 from numpy.typing import NDArray
 
-from gym_cellular_automata.forest_fire.bulldozer import ForestFireBulldozerEnv
+from gym_cellular_automata.forest_fire.bulldozer import (
+    ForestFireBulldozerEnv,
+    AdvancedForestFireBulldozerEnv,
+)
 from gym_cellular_automata.forest_fire.helicopter import ForestFireHelicopterEnv
 from gym_cellular_automata.grid_space import GridSpace
 
@@ -13,10 +16,14 @@ FFDIR = "gym_cellular_automata.forest_fire"
 
 LIBRARY = "gym_cellular_automata"
 
-prototypes = (ForestFireHelicopterEnv, ForestFireBulldozerEnv)
+prototypes = (
+    ForestFireHelicopterEnv,
+    ForestFireBulldozerEnv,
+    AdvancedForestFireBulldozerEnv,
+)
 
 
-HELR, HELC = 5, 5
+HELR, HELC = 42, 42
 BULR, BULC = 256, 256
 
 REGISTERED_CA_ENVS = {

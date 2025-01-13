@@ -1,0 +1,577 @@
+#!/usr/bin/env python
+import argparse
+import warnings
+from pathlib import Path
+from typing import Union
+
+import gif
+import jax
+import jax.numpy as jnp
+import moviepy as mp
+from gymnasium import Env, make
+from gymnasium.error import NameNotFound
+from jax.lib import xla_bridge
+from matplotlib._api.deprecation import MatplotlibDeprecationWarning
+from tqdm import tqdm
+import flax
+import pickle
+from jax.profiler import trace
+
+import optax
+
+import gym_cellular_automata as gymca
+from gym_cellular_automata.agents.jax_ppo import (
+    run_rollout_loop,
+    load_actor,
+    Network,
+    Actor,
+    Critic,
+    TrainState,
+)
+from gym_cellular_automata.forest_fire.bulldozer.utils.advanced_bulldozer_render import (
+    render,
+    plot_grid_attribute,
+)
+from multiprocessing import Pool
+from functools import partial
+from collections import defaultdict
+import matplotlib
+import numpy as np
+
+DEFAULT_UPDATES = 40
+DEFAULT_MILISECOND_FRAME = 80
+
+matplotlib.use("agg")
+# Disable JAX JIT compilation
+# jax.config.update("jax_disable_jit", True)
+# print("JAX JIT compilation has been disabled.")
+
+
+# Add at the beginning of the file, after imports
+def get_default_device():
+    """Get the default JAX device (GPU/TPU if available, else CPU)"""
+    return xla_bridge.get_backend().platform
+
+
+# Set default device platform
+DEFAULT_PLATFORM = get_default_device()
+print(f"Default platform: {DEFAULT_PLATFORM}")
+
+# Configure JAX to use the default platform
+jax.config.update("jax_platform_name", DEFAULT_PLATFORM)
+
+
+@gif.frame
+def process_single_frame(args, empty, tree, fire, title, pos_fires):
+    """Helper function that applies the decorator inside the process"""
+
+    grid = args["grid"]
+    time_per_frame = args["time"]
+    position = args["position"]
+    wind_index = args["wind_index"]
+    game_idx = args["game_index"]
+    frame_idx = args["frame_index"]
+    cell_count = args["cell_count"]
+    is_night = args["is_night"]
+    pos_fire = pos_fires[game_idx]
+
+    # return make_frame_local(env, grid, time_per_frame, position, pos_fire, wind_index)
+    plot = render(
+        empty,
+        tree,
+        fire,
+        title,
+        grid,
+        time_per_frame,
+        position,
+        cell_count,
+        pos_fire,
+        wind_index,
+        is_night,
+    )
+    # plt.close("all")
+    return plot
+
+
+@gif.frame
+def make_frame(plot):
+    return plot
+
+
+def get_run(env: Env, actor):
+
+    warnings.filterwarnings("ignore", category=MatplotlibDeprecationWarning)
+
+    # @gif.frame
+    def run(obs, info, episode_stats):
+        # if save_gif:
+        #     env.render()
+        action = actor(obs[0], obs[1]["position"])
+        step_tuple = env.stateless_step(action, obs, info)
+        (
+            next_obs,
+            reward,
+            next_done,
+            truncated,
+            next_info,
+        ) = step_tuple
+
+        new_episode_return = episode_stats.episode_returns + next_info["reward"]
+        new_episode_length = episode_stats.episode_lengths + 1
+
+        episode_stats = episode_stats.replace(
+            episode_returns=(new_episode_return)
+            * (1 - next_info["terminated"])
+            * (1 - next_info["TimeLimit.truncated"]),
+            episode_lengths=(new_episode_length)
+            * (1 - next_info["terminated"])
+            * (1 - next_info["TimeLimit.truncated"]),
+            # only update the `returned_episode_returns` if the episode is done
+            returned_episode_returns=jnp.where(
+                next_info["terminated"] + next_info["TimeLimit.truncated"],
+                new_episode_return,
+                episode_stats.returned_episode_returns,
+            ),
+            returned_episode_lengths=jnp.where(
+                next_info["terminated"] + next_info["TimeLimit.truncated"],
+                new_episode_length,
+                episode_stats.returned_episode_lengths,
+            ),
+        )
+        new_episode_return = episode_stats.episode_returns + next_info["reward"]
+        step_tuple = env.conditional_reset(step_tuple, action)
+        return step_tuple, episode_stats
+
+    return run
+
+
+@flax.struct.dataclass
+class EpisodeStatistics:
+    episode_returns: jnp.array
+    episode_lengths: jnp.array
+    returned_episode_returns: jnp.array
+    returned_episode_lengths: jnp.array
+
+
+def save_frames_and_plots(
+    env,
+    name,
+    num_envs,
+    frames_per_game,
+    duration_between,
+    no_hidden=False,
+    parallel=False,
+):
+    def get_paths(key: str, i: int) -> str:
+        paths = {}
+        if isinstance(name, str):
+            # Create main gifs directory
+            base_folder = Path().cwd() / "gifs"
+            base_folder.mkdir(exist_ok=True)
+
+            # Create env-specific subfolder
+            env_folder = base_folder / name
+            env_folder.mkdir(exist_ok=True)
+            for j in range(num_envs):
+                index_folder = base_folder / env_folder / f"{name}_{j}"
+                index_folder.mkdir(exist_ok=True)
+
+            # Set paths for all files
+            paths = {
+                "gif": base_folder
+                / env_folder
+                / f"{name}_{i}"
+                / f"{name}_{key}_{i}.gif",
+                "mp4": base_folder
+                / env_folder
+                / f"{name}_{i}"
+                / f"{name}_{key}_{i}.mp4",
+                "altitude": base_folder
+                / env_folder
+                / f"{name}_{i}"
+                / f"{name}_{key}_{i}_altitude.png",
+                "density": base_folder
+                / env_folder
+                / f"{name}_{i}"
+                / f"{name}_{key}_{i}_density.png",
+                "vegitation": base_folder
+                / env_folder
+                / f"{name}_{i}"
+                / f"{name}_{key}_{i}_vegitation.png",
+            }
+        return paths[key]
+
+    if name == "advanced_bulldozer" and not no_hidden:
+        # Generate and save altitude plots
+        altitude_plots = env.altitude_render()
+        for i in range(num_envs):
+            altitude_plots[i].gcf().savefig(get_paths("altitude", i))
+            altitude_plots[i].close()
+
+        # Generate and save density plots
+        density_plots = env.density_render()
+        for i in range(num_envs):
+            density_plots[i].gcf().savefig(get_paths("density", i))
+            density_plots[i].close()
+
+        # Generate and save vegetation plots
+        vegetation_plots = env.vegitation_render()
+        for i in range(num_envs):
+            vegetation_plots[i].gcf().savefig(get_paths("vegitation", i))
+            vegetation_plots[i].close()
+
+    process_func = partial(
+        process_single_frame,
+        empty=env._empty,
+        tree=env._tree,
+        fire=env._fire,
+        title=env.spec.id if env.spec is not None else env.title,
+        pos_fires=env._pos_fire,
+    )
+    n_processes = 8
+
+    # Process all frames in parallel
+    # Initialize empty games list with the right number of sublists
+    games = [[] for _ in range(len(frames_per_game))]
+
+    # Flatten all frames into a single list with their game indices
+    flat_frames = []
+    frame_to_game_idx = []
+    for game_idx, frames in enumerate(frames_per_game):
+        flat_frames.extend(frames)
+        frame_to_game_idx.extend([game_idx] * len(frames))
+
+    if parallel:
+        chunk_size = 100
+        # processed_frames = []
+        with Pool(processes=n_processes) as pool:
+            for i in range(0, len(flat_frames), chunk_size):
+                chunk = flat_frames[i : i + chunk_size]
+                chunk_processed = list(
+                    tqdm(
+                        pool.imap(process_func, chunk),
+                        total=len(chunk),
+                        desc=f"Processing frames {i}-{i+len(chunk)}",
+                    )
+                )
+                # Append each processed frame to its corresponding game list
+                for frame_idx, processed_frame in enumerate(chunk_processed):
+                    game_idx = frame_to_game_idx[i + frame_idx]
+                    games[game_idx].append(processed_frame)
+    else:
+        # Process frames sequentially and organize them into games
+        for frame_idx, frame in enumerate(
+            tqdm(
+                map(process_func, flat_frames),
+                total=len(flat_frames),
+                desc="Processing frames",
+            )
+        ):
+            game_idx = frame_to_game_idx[frame_idx]
+            games[game_idx].append(frame)
+
+    for i in range(len(games)):
+        fps = 1000 / duration_between
+        clip = mp.ImageSequenceClip([np.array(img) for img in games[i]], fps=fps)
+        clip.write_videofile(get_paths("mp4", i), fps=30, threads=1, codec="libx264")
+
+
+def generate_frames(
+    env: Env,
+    name: Union[str, Path],
+    each: int = 1,
+    updates: int = 50,
+    duration_between: int = 50,
+    save_gif: bool = True,
+    num_envs: int = 8,
+    profile: bool = False,
+    no_train: bool = False,
+    no_hidden: bool = False,
+    actor=None,
+    key=jax.random.key(0),
+    device=0,
+    learning_rate=2.5e-4,
+    track=False,
+):
+    import time
+
+    start_time = time.time()
+    run = get_run(env, actor)
+    frames_per_game = [[] for _ in range(num_envs)]
+    next_obs, report = env.reset()
+    next_info = {
+        "TimeLimit.truncated": jnp.full(num_envs, False),
+        "terminated": jnp.full(num_envs, False),
+        "steps_elapsed": jnp.zeros(num_envs),
+        "reward_accumulated": jnp.zeros(num_envs),
+        "reward": jnp.zeros(num_envs),
+    }
+
+    def run_env(next_local_obs, next_info):
+        episode_stats = EpisodeStatistics(
+            episode_returns=jnp.zeros(num_envs, dtype=jnp.float32),
+            episode_lengths=jnp.zeros(num_envs, dtype=jnp.int32),
+            returned_episode_returns=jnp.zeros(num_envs, dtype=jnp.float32),
+            returned_episode_lengths=jnp.zeros(num_envs, dtype=jnp.int32),
+        )
+        progress_bar = tqdm(range(updates), desc="Generating frames")
+        for frame_index in progress_bar:
+            (
+                next_local_obs,
+                reward,
+                next_done,
+                truncated,
+                next_info,
+            ), episode_stats = run(next_local_obs, next_info, episode_stats)
+            avg_episode_length = np.mean(
+                jax.device_get(episode_stats.returned_episode_lengths)
+            )
+            current_episode_length = np.mean(
+                jax.device_get(episode_stats.episode_lengths)
+            )
+            progress_bar.set_postfix(
+                {
+                    "avg_episode_length": f"{avg_episode_length:.2f}",
+                    "current_episode_length": f"{current_episode_length:.2f}",
+                },
+                refresh=True,
+            )
+            for game_index in range(next_local_obs[0].shape[0]):
+                frames_per_game[game_index].append(
+                    {
+                        "grid": next_local_obs[1]["per_env_context"]["true_grid"][
+                            game_index
+                        ],
+                        "wind_index": next_local_obs[1]["per_env_context"][
+                            "wind_index"
+                        ][game_index],
+                        "is_night": next_local_obs[1]["per_env_context"]["is_night"][
+                            game_index
+                        ],
+                        "time": next_local_obs[1]["time"][game_index],
+                        "position": next_local_obs[1]["position"][game_index],
+                        "frame_index": frame_index,
+                        "game_index": game_index,
+                        "cell_count": env.count_cells(next_local_obs[0][game_index]),
+                    }
+                )
+            avg_episodic_return = np.mean(
+                jax.device_get(episode_stats.returned_episode_returns)
+            )
+            current_episodic_return = np.mean(
+                jax.device_get(episode_stats.episode_returns)
+            )
+
+            progress_bar.set_postfix(
+                {
+                    "avg_return": f"{avg_episodic_return:.2f}",
+                    "current_return": f"{current_episodic_return:.2f}",
+                },
+                refresh=True,
+            )
+        return next_local_obs, next_info
+
+    if no_train:
+        if profile:
+            with trace(
+                "./profile",
+                create_perfetto_link=True,
+                create_perfetto_trace=True,
+            ):
+                next_obs, next_info = run_env(next_obs, next_info)
+        else:
+            next_obs, next_info = run_env(next_obs, next_info)
+
+        save_frames_and_plots(
+            env,
+            name,
+            num_envs,
+            frames_per_game,
+            duration_between,
+            no_hidden,
+            parallel=True,
+        )
+
+    else:
+        if len(jax.devices()) >= 4:
+            device = jax.devices("tpu")[device]
+        else:
+            device = jax.devices("cpu")[0]
+        with jax.default_device(device):
+            storage_returns, agent_state, run_name = run_rollout_loop(
+                env,
+                updates,
+                num_envs=num_envs,
+                recording_times=8,
+                use_gif=save_gif,
+                key=key,
+                learning_rate=learning_rate,
+                device_index=device,
+                track=track,
+            )
+        # grid_obs shape is (time, env, height, width)
+        frames_per_game = []
+        if save_gif:
+            for video_index, video_frames in enumerate(storage_returns):
+                frames_per_game.append([])
+                for frame_group in video_frames:
+                    grid_obs = frame_group["grid_obs"]
+                    position_obs = frame_group["position_obs"]
+                    contexts = frame_group["contexts"]
+                    for frame_index in range(grid_obs.shape[1]):
+                        frames_per_game[video_index].append(
+                            {
+                                "grid": grid_obs[0, frame_index],
+                                "wind_index": contexts["wind_index"][0, frame_index],
+                                "time": contexts["time"][0, frame_index],
+                                "position": tuple(
+                                    map(int, position_obs[0, frame_index])
+                                ),
+                                "frame_index": frame_index,
+                                "game_index": 0,
+                                "cell_count": env.count_cells(grid_obs[0, frame_index]),
+                            }
+                        )
+            save_frames_and_plots(
+                env,
+                name,
+                len(frames_per_game),
+                frames_per_game,
+                duration_between,
+                no_hidden,
+                parallel=not bool(len(jax.devices()) >= 4),
+            )
+        with open(f"runs/{run_name}_params.pkl", "wb") as f:
+            pickle.dump(agent_state.params, f)
+
+    end_time = time.time()
+    print(f"Generation completed in {end_time - start_time:.2f} seconds")
+
+
+def generate_gif_envs(args):
+    prototypes = ["helicopter", "bulldozer", "advanced_bulldozer"]
+
+    proto_id = 2
+    name = prototypes[proto_id]
+    ProtoEnv = gymca.prototypes[proto_id]
+
+    speed_move = (
+        int(args.speed_move) if isinstance(args.speed_move, str) else args.speed_move
+    )
+    speed_multiplier = (
+        int(args.speed_multiplier)
+        if isinstance(args.speed_multiplier, str)
+        else args.speed_multiplier
+    )
+    key = jax.random.key(int(args.key))
+    key, subkey = jax.random.split(key)
+
+    env = ProtoEnv(
+        nrows=args.size,
+        ncols=args.size,
+        key=key,
+        num_envs=args.num_envs,
+        speed_move=speed_move * speed_multiplier,
+        speed_act=0.03 * speed_multiplier,
+        use_hidden=not args.no_hidden,
+        middle_fire=True,
+        enable_extensions=args.enable_extensions,
+    )
+
+    if args.params:
+        actor = load_actor(args.params, env)
+    else:
+        actor = lambda x, y: env.total_action_space.sample()
+
+    generate_frames(
+        env,
+        name,
+        updates=args.steps,
+        duration_between=args.duration,
+        save_gif=args.gif,
+        num_envs=args.num_envs,
+        profile=args.profile,
+        no_train=args.no_train,
+        no_hidden=args.no_hidden,
+        actor=actor,
+        key=subkey,
+        device=int(args.device),
+        learning_rate=float(args.learning_rate),
+        track=args.track,
+    )
+
+
+# CLI args
+parser = argparse.ArgumentParser()
+parser.description = (
+    "Generate gif files sample for each of the gym_cellular_automata library"
+)
+
+
+parser.add_argument(
+    "--steps",
+    "-s",
+    type=int,
+    default=DEFAULT_UPDATES,
+    help=f"Steps to play on the environment. {DEFAULT_UPDATES}",
+)
+
+parser.add_argument(
+    "--duration",
+    "-d",
+    type=float,
+    default=DEFAULT_MILISECOND_FRAME,
+    help=f"Time elapsed in miliseconds between each frame of the animation. "
+    f"{DEFAULT_MILISECOND_FRAME}",
+)
+
+parser.add_argument(
+    "--gif",
+    action="store_true",
+    help="Run without generating gif files",
+)
+
+parser.add_argument(
+    "--num-envs",
+    "-n",
+    type=int,
+    default=8,
+)
+
+parser.add_argument(
+    "--profile",
+    "-p",
+    action="store_true",
+    help="Run with profiling",
+)
+
+parser.add_argument(
+    "--no-train",
+    "-t",
+    action="store_true",
+    help="Run without training",
+)
+
+parser.add_argument("--speed-move", "-m", default=0.12)
+
+parser.add_argument("--speed-multiplier", default=1)
+parser.add_argument(
+    "--size",
+    "-z",
+    type=int,
+    default=256,
+)
+parser.add_argument("--device", default="0")
+
+parser.add_argument("--no-hidden", action="store_true")
+parser.add_argument("--params")
+parser.add_argument("--key", default="0")
+parser.add_argument("--learning-rate", default=2.5e-4)
+parser.add_argument("--enable-extensions", action="store_true")
+parser.add_argument("--track", action="store_true")
+
+if __name__ == "__main__":
+    args = parser.parse_args()
+
+    gif.options.matplotlib["dpi"] = 200
+    generate_gif_envs(args)

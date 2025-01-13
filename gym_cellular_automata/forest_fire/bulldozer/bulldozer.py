@@ -19,7 +19,7 @@ from .utils.render import render
 
 
 class ForestFireBulldozerEnv(CAEnv):
-    metadata = {"render_modes": ["human"]}
+    metadata = {"render_modes": ["human"], "render_mode": "rgb_array"}
 
     @property
     def MDP(self):
@@ -266,7 +266,11 @@ class ForestFireBulldozerEnv(CAEnv):
             self._pos_bull = r, c
 
         init_position = np.array(self._pos_bull)
-        init_context = self._wind, init_position, np.array(init_time, dtype=TYPE_BOX)
+        init_context = (
+            {"wind": self._wind},
+            init_position,
+            np.array(init_time, dtype=TYPE_BOX),
+        )
 
         return init_context
 

@@ -70,5 +70,6 @@ class Operator(ABC):
         return self.update(*args, **kwargs)
 
     def seed(self, seed=None):
-        self.np_random, seed = seeding.np_random(seed)
+        self._seed = seed
+        self.np_random = np.random.default_rng(seed)
         return [seed]
