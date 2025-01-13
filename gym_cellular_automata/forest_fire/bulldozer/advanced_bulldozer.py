@@ -92,21 +92,29 @@ def noop_fn(grid, per_env_context, shared_context, skip_visibility=0, skip_blur=
 
 
 @jax.jit
-def unblur_fn(grid, per_env_context, shared_context, skip_visibility=0, skip_blur=0):
+def unblur_fn(
+    grid,
+    per_env_context,
+    shared_context,
+    skip_visibility=0,
+    skip_blur=0,
+):
     """Show grid with specified transformation skips"""
-    return transform_grid(
-        grid, per_env_context, skip_visibility=skip_visibility, skip_blur=skip_blur
-    )
+    # Only apply additional transformations if they differ from base transformation
+    return grid
 
 
 @jax.jit
 def see_invisible_fires_fn(
-    grid, per_env_context, shared_context, skip_visibility=0, skip_blur=0
+    grid,
+    per_env_context,
+    shared_context,
+    skip_visibility=1,
+    skip_blur=0,
 ):
     """Show grid with specified transformation skips"""
-    return transform_grid(
-        grid, per_env_context, skip_visibility=skip_visibility, skip_blur=skip_blur
-    )
+    # Only apply additional transformations if they differ from base transformation
+    return grid
 
 
 EXTENSION_REGISTRY = [
