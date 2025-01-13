@@ -575,6 +575,9 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             "altitude",
             "zoom",
         ]
+        self._reward_per_empty = 0.0
+        self._reward_per_tree = 1.0
+        self._reward_per_fire = -1.0
 
         self.num_envs = num_envs
         self.title = "ForestFireBulldozer" + str(nrows) + "x" + str(ncols)
@@ -1001,18 +1004,34 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
 
     #     return reward
 
-    def _award(self, prev_grid, grid):
-        prev_counts = self.count_cells(prev_grid)
-        counts = self.count_cells(grid)
-        t = counts[self._tree]  # trees
-        f = counts[self._fire]  # fires
-        e = counts[self._empty]  # empty
-        total_cells = t + f + e
+    # def _award(self, prev_grid, grid):
+    #     prev_counts = self.count_cells(prev_grid)
+    #     counts = self.count_cells(grid)
+    #     t = counts[self._tree]  # trees
+    #     f = counts[self._fire]  # fires
+    #     e = counts[self._empty]  # empty
+    #     total_cells = t + f + e
 
-        # Reward for preventing tree loss
-        tree_change = (counts[self._tree] - prev_counts[self._tree]) / total_cells
-        fire_change = (counts[self._fire] - prev_counts[self._fire]) / total_cells
-        return tree_change * 5.0 + -fire_change * 10.0
+    #     # Reward for preventing tree loss
+    #     tree_change = (counts[self._tree] - prev_counts[self._tree]) / total_cells
+    #     fire_change = (counts[self._fire] - prev_counts[self._fire]) / total_cells
+    #     return tree_change * 5.0 + -fire_change * 10.0
+    def _award(self, prev_grid, grid):
+        ncells = grid.shape[0] * grid.shape[1]
+
+        dict_counts = self.count_cells(grid)
+
+        cell_counts = jnp.array(
+            [dict_counts[self._empty], dict_counts[self._tree], dict_counts[self._fire]]
+        )
+
+        cell_counts_relative = cell_counts / ncells
+
+        reward_weights = jnp.array(
+            [self._reward_per_empty, self._reward_per_tree, self._reward_per_fire]
+        )
+
+        return jnp.dot(reward_weights, cell_counts_relative)
 
     def _is_done(self, grid):
         return jnp.invert(jnp.any(grid == self._fire))
