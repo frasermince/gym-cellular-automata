@@ -65,11 +65,11 @@ def test_extension_observations(env):
         if i == 1 or i == 3:  # Unblur extension
             if i == 1:
                 assert jnp.all(
-                    next_grid[..., 3] == 0
+                    next_grid[..., 4] == 0
                 ), "Invisible fires channel should be zero"
 
             # Extension channel should show unblurred view
-            unblur_channel = next_grid[..., 2]
+            unblur_channel = next_grid[..., 3]
             has_fires = jnp.any(next_grid[..., 0] == env._fire, axis=(1, 2))
 
             # Check if grids differ where they should
@@ -77,15 +77,15 @@ def test_extension_observations(env):
 
             # Assert that grids differ when they should
             assert not jnp.any(
-                jnp.logical_and(has_fires, grids_equal)
+                jnp.logical_or(has_fires, grids_equal)
             ), "Unblur channel should differ from base grid during day with fires"
 
         if i == 2 or i == 3:  # See invisible fires extension
 
             if i == 2:
-                assert jnp.all(next_grid[..., 2] == 0), "Unblur channel should be zero"
+                assert jnp.all(next_grid[..., 3] == 0), "Unblur channel should be zero"
             # Extension channel should show fires even during day
-            invisible_fires_channel = next_grid[..., 3]
+            invisible_fires_channel = next_grid[..., 4]
             is_daytime = next_context["per_env_context"]["is_night"] == 0
 
             # Only check daytime environments

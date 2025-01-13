@@ -123,11 +123,10 @@ EXTENSION_REGISTRY = [
             sorted(
                 [
                     ExtensionInfo(
-                        0, partial(unblur_fn, skip_visibility=0, skip_blur=1)
+                        0, unblur_fn, skip_visibility=0, skip_blur=1
                     ),  # Skip blur but keep visibility
                     ExtensionInfo(
-                        1,
-                        partial(see_invisible_fires_fn, skip_visibility=1, skip_blur=0),
+                        1, see_invisible_fires_fn, skip_visibility=1, skip_blur=0
                     ),  # Skip visibility but keep blur
                 ],
                 key=lambda x: x.index,
@@ -169,13 +168,25 @@ def apply_blur(grid):
 
 
 @jax.jit
-def transform_grid(grid, per_env_context, skip_visibility=0, skip_blur=0):
+def transform_grid(grid, per_env_context, skip_visibility, skip_blur):
     """Apply sequence of transformations, conditionally based on skip flags
     Args:
         skip_visibility: int 0 or 1
         skip_blur: int 0 or 1
     """
-    # Use where instead of if statements
+    # print("skip_visibility", skip_visibility)
+    # print("skip_blur", skip_blur)
+    # jax.debug.callback(
+    #     transform_printer,
+    #     (
+    #         jnp.array(
+    #             [
+    #                 skip_visibility,
+    #                 skip_blur,
+    #             ]
+    #         )
+    #     ),
+    # )
     grid = jnp.where(skip_visibility, grid, apply_visibility(grid, per_env_context))
 
     grid = jnp.where(skip_blur, grid, apply_blur(grid))
@@ -1425,7 +1436,7 @@ class MDP(Operator):
     ):
         # Base observation with all transformations
         if self.should_transform_grid:
-            transformed_grid = transform_grid(grid, per_env_context)
+            transformed_grid = transform_grid(grid, per_env_context, 0, 0)
         else:
             transformed_grid = grid
 
