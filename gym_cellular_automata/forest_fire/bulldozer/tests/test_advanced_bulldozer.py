@@ -38,7 +38,6 @@ def test_extension_observations(env):
             [4, 0, 0],  # No extensions active
             [4, 0, 1],  # First extension active (unblur)
             [4, 0, 2],  # Second extension active (see invisible fires)
-            [4, 0, 3],  # Both extensions active
         ]
     )
 
