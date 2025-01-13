@@ -779,6 +779,7 @@ def run_rollout_loop(
         b_actions = storage.actions.reshape((-1,) + (env.total_action_space.shape[-1],))
         b_advantages = storage.advantages.reshape(-1)
         b_returns = storage.returns.reshape(-1)
+        b_values = storage.values.reshape(-1)
         # Generate keys for all epochs
         keys = jax.random.split(key, args.update_epochs + 1)
         key = keys[0]
@@ -821,7 +822,7 @@ def run_rollout_loop(
             )
 
         @jax.jit
-        def ppo_loss(params, x, a, logp, mb_advantages, mb_returns):
+        def ppo_loss(params, x, a, logp, mb_advantages, mb_returns, mb_values):
             newlogprob, entropy, newvalue = get_action_and_value2(params, x, a)
             logratio = newlogprob - logp
             ratio = jnp.exp(logratio)
@@ -874,8 +875,30 @@ def run_rollout_loop(
             #     pg_loss.reshape(pg_loss.shape[:-2] + (-1,))
             # )
 
+            # jax.debug.callback(
+            #     debug_printer,
+            #     (
+            #         jnp.array(
+            #             [
+            #                 newvalue,
+            #                 mb_returns,
+            #             ]
+            #         )
+            #     ),
+            # )
             # Value loss
-            v_loss = 0.5 * ((newvalue - mb_returns) ** 2).mean()
+            if args.clip_vloss:
+                v_loss_unclipped = 0.5 * ((newvalue - mb_returns) ** 2).mean()
+                v_clipped = mb_values + jnp.clip(
+                    newvalue - mb_values,
+                    -args.clip_coef,
+                    args.clip_coef,
+                )
+                v_loss_clipped = (v_clipped - mb_returns) ** 2
+                v_loss_max = jnp.maximum(v_loss_unclipped, v_loss_clipped)
+                v_loss = 0.5 * v_loss_max.mean()
+            else:
+                v_loss = 0.5 * ((newvalue - mb_returns) ** 2).mean()
             # jax.debug.callback(loss_printer, (v_loss,))
 
             entropy_loss = entropy.mean()
@@ -908,6 +931,7 @@ def run_rollout_loop(
                     b_logprobs[perm_indices],
                     b_advantages[perm_indices],
                     b_returns[perm_indices],
+                    b_values[perm_indices],
                 )
                 # print("grads", grads.shape)
                 # jax.debug.visualize_array_sharding(
