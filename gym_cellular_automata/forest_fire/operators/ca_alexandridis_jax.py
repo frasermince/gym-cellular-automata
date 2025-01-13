@@ -43,20 +43,22 @@ class PartiallyObservableForestFireJax(Operator):
 
     deterministic = False
 
-    def __init__(self, empty, tree, fire, *args, **kwargs):
+    def __init__(self, empty, tree, fire, bulldozed, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
         self.empty = empty
         self.tree = tree
         self.fire = fire
-
+        self.bulldozed = bulldozed
         if self.context_space is None:
             self.context_space = spaces.Box(0.0, 1.0, shape=(2,), dtype=TYPE_BOX)
 
     # ... keep existing class setup ...
 
     @partial(jit, static_argnums=(0,))
-    def _compute_burn_probability(self, vegetation, density, wind, slope):
+    def _compute_burn_probability(
+        self, vegetation, density, wind, slope, bulldozed_counts
+    ):
         """Vectorized computation of burn probabilities"""
         # Convert discrete values to probabilities using JAX's type-safe operations
         veg_probs = jnp.array(
@@ -77,12 +79,13 @@ class PartiallyObservableForestFireJax(Operator):
 
         # Vectorize the lookup
 
-        p_h = 0.48
+        p_h = 0.48 - 0.015 * bulldozed_counts
         a = 0.078
         p_slope = jnp.exp(a * slope)
 
         p_veg = p_veg[..., None, None]  # Add two dimensions: (200, 200, 1, 1)
         p_den = p_den[..., None, None]  # Add two dimensions: (200, 200, 1, 1)
+        p_h = p_h[..., None, None]
 
         return p_h * (1 + p_veg) * (1 + p_den) * wind * p_slope
 
@@ -216,6 +219,9 @@ class PartiallyObservableForestFireJax(Operator):
         neighborhoods = vmap(
             vmap(moore_n, in_axes=(None, 0, None)), in_axes=(None, 0, None)
         )(1, (rows, cols), grid)
+        # Count bulldozed cells in each 3x3 neighborhood
+        bulldozed_neighborhoods = neighborhoods == self.bulldozed
+        bulldozed_counts = bulldozed_neighborhoods.sum(axis=(-1, -2))
 
         # Handle direct fire spread
         key, subkey = random.split(key)
@@ -224,13 +230,14 @@ class PartiallyObservableForestFireJax(Operator):
             per_env_context["density"],
             wind_matrix,
             per_env_context["slope"],
+            bulldozed_counts,
         )
 
         random_values_burn = random.uniform(subkey, burn_probs.shape)
         key, subkey = random.split(key)
         random_values_grow = random.uniform(subkey, grid.shape)
 
-        # Generate random fire ages (8-15) for new fires
+        # Generate random fire ages (8-10) for new fires
         key, fire_age_key = random.split(key)
         new_fire_ages = random.randint(fire_age_key, grid.shape, 5, 10)
 
