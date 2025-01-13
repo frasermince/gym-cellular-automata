@@ -79,7 +79,7 @@ class PartiallyObservableForestFireJax(Operator):
 
         # Vectorize the lookup
 
-        p_h = 0.48 - 0.02 * bulldozed_counts
+        p_h = 0.48 - 0.03 * bulldozed_counts
         a = 0.078
         p_slope = jnp.exp(a * slope)
 

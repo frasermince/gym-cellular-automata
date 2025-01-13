@@ -577,7 +577,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         ]
         self._reward_per_empty = 0.0
         self._reward_per_tree = 1.0
-        self._reward_per_fire = -4.0
+        self._reward_per_fire = -1.0
         self._reward_per_bulldozed = 0.0
 
         self.num_envs = num_envs
