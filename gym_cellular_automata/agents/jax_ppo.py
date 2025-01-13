@@ -1232,6 +1232,11 @@ def run_rollout_loop(
                 if np.any(recent_lengths != 0)
                 else 0
             )
+            writer.add_scalar(
+                "charts/avg_return_per_timestep",
+                recent_avg_return / max(recent_avg_length, 1e-8),
+                global_step,
+            )
 
             # Update progress bar
             progress_bar.set_postfix(
