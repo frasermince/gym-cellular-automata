@@ -1229,6 +1229,16 @@ def run_rollout_loop(
                 global_step,
             )
 
+            writer.add_scalar(
+                "charts/recent_avg_return",
+                recent_avg_return,
+                global_step,
+            )
+            writer.add_scalar(
+                "charts/recent_avg_length",
+                recent_avg_length,
+                global_step,
+            )
             # Update progress bar
             progress_bar.set_postfix(
                 {
