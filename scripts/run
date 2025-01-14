@@ -115,6 +115,8 @@ def get_run(env: Env, actor):
             truncated,
             next_info,
         ) = step_tuple
+        print(f"Reward: {reward}")
+        print(f"Time Step: {next_obs[1]['per_env_context']['time_step']}")
 
         new_episode_return = episode_stats.episode_returns + next_info["reward"]
         new_episode_length = episode_stats.episode_lengths + 1
@@ -421,7 +423,8 @@ def generate_frames(
                     for frame_index in range(grid_obs.shape[1]):
                         frames_per_game[video_index].append(
                             {
-                                "grid": grid_obs[0, frame_index],
+                                "grid": contexts["true_grid"][0, frame_index],
+                                "is_night": contexts["is_night"][0, frame_index],
                                 "wind_index": contexts["wind_index"][0, frame_index],
                                 "time": contexts["time"][0, frame_index],
                                 "position": tuple(

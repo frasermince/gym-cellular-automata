@@ -1195,6 +1195,13 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
                 shape=(self.num_envs,),
                 dtype=TYPE_BOX,
             ),
+            "time_step": spaces.Box(
+                0, float("inf"), shape=(self.num_envs,), dtype=TYPE_BOX
+            ),
+            "true_grid": spaces.Box(
+                0, 2, shape=(self.num_envs, self.nrows, self.ncols), dtype=TYPE_BOX
+            ),
+            # "key": spaces.Box(0, float("inf"), shape=(self.num_envs,), dtype=TYPE_BOX),
         }
 
         # Create spaces for shared context parameters

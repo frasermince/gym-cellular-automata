@@ -270,16 +270,17 @@ class EpisodeStatistics:
 def build_storage_return(storage, env):
     # Save grid observations to JSON file
     grid_obs = jax.device_get(storage.grid_obs).transpose(
-        1, 0, 2, 3
+        1, 0, *range(2, storage.grid_obs.ndim)
     )  # Get array from device and swap first two dims
     position_obs = jax.device_get(storage.position_obs).transpose(
         1, 0, 2
     )  # Get array from device and swap first two dims
     contexts = {}
     for context_key in env.per_env_context_keys:
-        contexts[context_key] = jax.device_get(storage.contexts[context_key]).transpose(
-            1, 0, *range(2, storage.contexts[context_key].ndim)
-        )
+        if context_key in storage.contexts.keys():
+            contexts[context_key] = jax.device_get(
+                storage.contexts[context_key]
+            ).transpose(1, 0, *range(2, storage.contexts[context_key].ndim))
     contexts["time"] = jax.device_get(storage.contexts["time"]).transpose(1, 0)
     return {"grid_obs": grid_obs, "position_obs": position_obs, "contexts": contexts}
 
@@ -590,9 +591,10 @@ def run_rollout_loop(
         contexts = {}
         if use_gif:
             for context_key in env.per_env_context_keys:
-                contexts[context_key] = jnp.zeros(
-                    (args.num_steps,) + per_env_context[context_key].shape
-                )
+                if context_key in per_env_context.keys():
+                    contexts[context_key] = jnp.zeros(
+                        (args.num_steps,) + per_env_context[context_key].shape
+                    )
             contexts["time"] = jax.device_put(
                 jnp.zeros((args.num_steps,) + context["time"].shape),
             )
@@ -634,15 +636,13 @@ def run_rollout_loop(
 
         # sample action: Gumbel-softmax trick
         # see https://stats.stackexchange.com/questions/359442/sampling-from-a-categorical-distribution
-        key, subkey = jax.random.split(key)
-        u = jax.random.uniform(subkey, shape=len(action_logits))
-
         actions = []
         logprobs = []
         for i in range(len(action_logits)):
+            key, subkey = jax.random.split(key)
+            u = jax.random.uniform(subkey, shape=action_logits[i].shape)
             logits = action_logits[i]
-            u_i = u[i]
-            action = jnp.argmax(logits - jnp.log(-jnp.log(u_i)), axis=-1)
+            action = jnp.argmax(logits - jnp.log(-jnp.log(u)), axis=-1)
             logprob = jax.nn.log_softmax(logits)[jnp.arange(action.shape[0]), action]
             actions.append(action)
             logprobs.append(logprob)
@@ -656,11 +656,15 @@ def run_rollout_loop(
         if use_gif:
             per_env_context = context["per_env_context"]
             for context_key in env.per_env_context_keys:
-                new_contexts[context_key] = (
-                    storage.contexts[context_key]
-                    .at[step]
-                    .set(per_env_context[context_key])
-                )
+                if (
+                    context_key in per_env_context.keys()
+                    and context_key in storage.contexts.keys()
+                ):
+                    new_contexts[context_key] = (
+                        storage.contexts[context_key]
+                        .at[step]
+                        .set(per_env_context[context_key])
+                    )
             new_contexts["time"] = (
                 storage.contexts["time"].at[step].set(context["time"])
             )
@@ -1050,6 +1054,7 @@ def run_rollout_loop(
         },
     )
     storage_returns = []
+    action_count = [0 for i in range(9)]
     with orbax.checkpoint.CheckpointManager(
         "/tmp/flax_ckpt/orbax/managed",
         options=checkpoint_options,
@@ -1141,6 +1146,9 @@ def run_rollout_loop(
             avg_returned_episode_length = np.mean(
                 jax.device_get(sharded_stats.returned_episode_lengths)
             )
+            # actions = jax.device_get(storage.actions)
+            # for action in actions:
+            #     action_count[action[0][0].item()] += 1
 
             writer.add_scalar(
                 "charts/avg_episodic_return", avg_episodic_return, global_step
