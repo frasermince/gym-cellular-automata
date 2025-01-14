@@ -1208,19 +1208,24 @@ def run_rollout_loop(
             # Calculate recent statistics
             recent_returns = jax.device_get(sharded_stats.recent_returns)
             recent_lengths = jax.device_get(sharded_stats.recent_lengths)
-            recent_avg_return = (
-                np.mean(recent_returns[recent_returns != 0])
-                if np.any(recent_returns != 0)
-                else 0
-            )
-            recent_avg_length = (
-                np.mean(recent_lengths[recent_lengths != 0])
-                if np.any(recent_lengths != 0)
-                else 0
-            )
+
+            # Calculate per-episode return/timestep ratios
+            mask = (recent_returns != 0) & (recent_lengths != 0)
+            if jnp.any(mask):
+                per_episode_ratios = jnp.where(
+                    mask, recent_returns / jnp.maximum(recent_lengths, 1e-8), 0
+                )
+                avg_return_per_timestep = jnp.mean(per_episode_ratios[mask]).item()
+                recent_avg_return = jnp.mean(recent_returns[mask]).item()
+                recent_avg_length = jnp.mean(recent_lengths[mask]).item()
+            else:
+                avg_return_per_timestep = 0
+                recent_avg_return = 0
+                recent_avg_length = 0
+
             writer.add_scalar(
                 "charts/avg_return_per_timestep",
-                recent_avg_return / max(recent_avg_length, 1e-8),
+                avg_return_per_timestep,
                 global_step,
             )
 
@@ -1232,7 +1237,7 @@ def run_rollout_loop(
                     # "current_return": f"{current_episodic_return:.2f}",
                     "games_finished": int(jax.device_get(total_finished)),
                     # "avg_returned_episode_length": f"{avg_returned_episode_length:.2f}",
-                    "avg_return_per_timestep": f"{recent_avg_return/max(recent_avg_length, 1e-8):.4f}",
+                    "avg_return_per_timestep": f"{avg_return_per_timestep:.4f}",
                     "recent_5_return": f"{recent_avg_return:.2f}",
                     "recent_5_length": f"{recent_avg_length:.2f}",
                     "value_loss": f"{v_loss.item():.4f}",
