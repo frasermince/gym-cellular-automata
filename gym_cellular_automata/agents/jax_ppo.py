@@ -122,68 +122,39 @@ class Network(nn.Module):
 
     @nn.compact
     def __call__(self, grid):
-        grid = nn.Conv(
+        x = nn.Conv(
             32,
             kernel_size=(8, 8),
             strides=(4, 4),
-            padding=padding_type,
+            padding="VALID",
             kernel_init=orthogonal(np.sqrt(2)),
             bias_init=constant(0.0),
         )(grid)
-        if self.log_grid_shapes:
-            print(f"Grid shape after first conv: {grid.shape}")
-
-        grid = nn.relu(grid)
-        grid = nn.Conv(
+        x = nn.relu(x)
+        x = nn.Conv(
             64,
             kernel_size=(4, 4),
             strides=(2, 2),
-            padding=padding_type,
+            padding="VALID",
             kernel_init=orthogonal(np.sqrt(2)),
             bias_init=constant(0.0),
-        )(grid)
-        if self.log_grid_shapes:
-            print(f"Grid shape after second conv: {grid.shape}")
-
-        grid = nn.relu(grid)
-        grid = nn.Conv(
+        )(x)
+        x = nn.relu(x)
+        x = nn.Conv(
             64,
             kernel_size=(3, 3),
             strides=(1, 1),
-            padding=padding_type,
+            padding="VALID",
             kernel_init=orthogonal(np.sqrt(2)),
             bias_init=constant(0.0),
-        )(grid)
-        if self.log_grid_shapes:
-            print(f"Grid shape after third conv: {grid.shape}")
-
-        grid = nn.relu(grid)
-
-        grid_features = grid.reshape(grid.shape[0], -1)
-        if self.log_grid_shapes:
-            print(f"Grid features shape after flatten: {grid_features.shape}")
-
-        grid_features = nn.Dense(
-            512, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0)
-        )(grid_features)
-        grid_features = nn.relu(grid_features)
-
-        # Combine features
-        # combined = jnp.concatenate([grid_features, position_features], axis=-1)
-        # if self.log_grid_shapes:
-        #     print(f"Combined features shape: {combined.shape}")
-
-        grid_features = nn.Dense(
-            256, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0)
-        )(grid_features)
-
-        grid_features = nn.relu(grid_features)
-
-        grid_features = nn.Dense(
-            128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0)
-        )(grid_features)
-        grid_features = nn.relu(grid_features)
-        return grid_features
+        )(x)
+        x = nn.relu(x)
+        x = x.reshape((x.shape[0], -1))
+        x = nn.Dense(512, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
+            x
+        )
+        x = nn.relu(x)
+        return x
 
 
 class Critic(nn.Module):
