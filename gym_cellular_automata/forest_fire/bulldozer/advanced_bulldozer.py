@@ -815,7 +815,9 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
 
         # Gym API Formatting
         obs = next_state
-        reward = jax.vmap(self._award, in_axes=(0, 0))(true_grid, next_true_grid)
+        reward = jax.vmap(self._award, in_axes=(0, 0, 0))(
+            true_grid, next_true_grid, per_env_context
+        )
         terminated = next_done
         truncated = jnp.full(next_true_grid.shape[0], False)
         info["reward"] = reward
@@ -948,114 +950,38 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             vegitations.append(plot_grid_attribute(self._vegitation[v], "Vegitation"))
         return vegitations
 
-    def _award(self, prev_grid, grid):
-        #     """Reward Function
+    def _award(self, prev_grid, grid, per_env_context):
+        """Reward Function
 
-        #     Negative Ratio of Burning Area per Total Flammable Area
+        Combines negative ratio of burning area with time pressure:
+        raw_reward = -(f / (t + f)) - (time_step / max_steps)
+        final_reward = tanh(raw_reward)
 
-        #     -(f / (t + f))
-        #     Where:
-        #         t: tree cell counts
-        #         f: fire cell counts
+        Where:
+            t: tree cell counts
+            f: fire cell counts
+            time_step: current timestep
+            max_steps: normalization factor (e.g. 200)
 
-        #     Objective:
-        #     Keep as much forest as possible.
-
-        #     Advantages:
-        #     1. Easy to interpret.
-        #         + Percent of the forest lost at each step.
-        #     2. Terminate ASAP.
-        #         + As the reward is negative.
-        #     3. Built-in cost of action.
-        #         + The agent removes trees, this decreases the reward.
-        #     4. Shaped reward.
-        #         + Reward is given at each step.
-
-        #     Disadvantages:
-        #     1. Lack of experimental results.
-        #     2. Is it equivalent with Sparse Reward?
-
-        #     The sparse reward is alive trees at epidose's end:
-        #     t / (e + t + f)
-        #     """
+        Both components naturally fall in [-1,0], so their sum is in [-2,0].
+        Tanh maps this smoothly to [-1,1] with good gradients in the typical range.
+        """
         counts = self.count_cells(grid)
 
+        # Basic fire/tree ratio component
         t = counts[self._tree]
         f = counts[self._fire]
-        return -(f / (t + f))
+        base_reward = -(f / (t + f))
 
-    # def _award(self, prev_grid, grid):
-    #     total_cells = float(self.nrows * self.ncols)
+        # Time pressure component (normalized to [0,1])
+        time_step = per_env_context["time_step"]
+        time_penalty = jnp.minimum(
+            time_step / 100.0, 2.0
+        )  # Caps at -1.0 after 200 steps
 
-    #     # Current state reward (bounded [-1, 1])
-    #     counts = self.count_cells(grid)
-    #     state_reward = (
-    #         -0.2 * counts[self._empty]
-    #         + 1.0 * counts[self._tree]
-    #         + -1.0 * counts[self._fire]
-    #     ) / total_cells
-
-    #     # Change-based rewards (each change is bounded [-1, 1])
-    #     prev_counts = self.count_cells(prev_grid)
-    #     fire_change = (counts[self._fire] - prev_counts[self._fire]) / total_cells
-    #     tree_change = (counts[self._tree] - prev_counts[self._tree]) / total_cells
-    #     empty_change = (counts[self._empty] - prev_counts[self._empty]) / total_cells
-
-    #     # Scale factors for combining rewards
-    #     STATE_WEIGHT = 1.0
-    #     CHANGE_WEIGHT = 0.5
-
-    #     reward = (
-    #         STATE_WEIGHT * state_reward  # [-1, 1]
-    #         # + CHANGE_WEIGHT
-    #         # * (
-    #         #     (-1.0 * fire_change)  # [-0.5, 0.5]
-    #         #     + (0.25 * tree_change)  # [-0.125, 0.125]
-    #         #     + (-0.05 * empty_change)  # [-0.025, 0.025]
-    #         # )
-    #         # + -0.01  # Time pressure
-    #     )
-
-    #     return reward
-
-    # def _award(self, prev_grid, grid):
-    #     prev_counts = self.count_cells(prev_grid)
-    #     counts = self.count_cells(grid)
-    #     t = counts[self._tree]  # trees
-    #     f = counts[self._fire]  # fires
-    #     e = counts[self._empty]  # empty
-    #     total_cells = t + f + e
-
-    #     # Reward for preventing tree loss
-    #     tree_change = (counts[self._tree] - prev_counts[self._tree]) / total_cells
-    #     fire_change = (counts[self._fire] - prev_counts[self._fire]) / total_cells
-    #     return tree_change * 5.0 + -fire_change * 10.0
-    # def _award(self, prev_grid, grid):
-    #     ncells = grid.shape[0] * grid.shape[1]
-
-    #     dict_counts = self.count_cells(grid)
-
-    #     cell_counts = jnp.array(
-    #         [
-    #             dict_counts[self._empty],
-    #             dict_counts[self._tree],
-    #             dict_counts[self._fire],
-    #             dict_counts[self._bulldozed],
-    #         ]
-    #     )
-
-    #     cell_counts_relative = cell_counts / ncells
-
-    #     reward_weights = jnp.array(
-    #         [
-    #             self._reward_per_empty,
-    #             self._reward_per_tree,
-    #             self._reward_per_fire,
-    #             self._reward_per_bulldozed,
-    #         ]
-    #     )
-
-    #     return jnp.dot(reward_weights, cell_counts_relative)
+        # Combine and map to [-1,1]
+        raw_reward = base_reward - time_penalty
+        return jnp.tanh(raw_reward)
 
     def _is_done(self, grid):
         return jnp.invert(jnp.any(grid == self._fire))
