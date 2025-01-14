@@ -562,7 +562,7 @@ def run_rollout_loop(
                     NamedSharding(mesh, P("devices", None)),
                 ),
                 logprobs=jax.device_put(
-                    jnp.zeros((args.num_steps,)),
+                    jnp.zeros((args.num_steps, env.total_action_space.shape[1])),
                     NamedSharding(mesh, P("devices", None)),
                 ),
                 dones=jax.device_put(
@@ -605,7 +605,7 @@ def run_rollout_loop(
                 (args.num_steps,) + env.total_action_space.shape,
                 dtype=jnp.int32,
             ),
-            logprobs=jnp.zeros((args.num_steps,)),
+            logprobs=jnp.zeros((args.num_steps, env.total_action_space.shape[1])),
             dones=jnp.zeros((args.num_steps, num_envs)),
             values=jnp.zeros((args.num_steps, num_envs)),
             advantages=jnp.zeros((args.num_steps, num_envs)),
@@ -647,8 +647,8 @@ def run_rollout_loop(
             actions.append(action)
             logprobs.append(logprob)
         actions = jnp.stack(actions, axis=1)
-        logprobs = jnp.stack(logprobs, axis=1)
-        logprobs = logprobs.sum(axis=1).squeeze()
+
+        logprobs = jnp.concat(logprobs)
 
         value = critic.apply(agent_state.params["critic_params"], hidden)
 
@@ -701,7 +701,7 @@ def run_rollout_loop(
             entropies.append(entropy)
         logprobs = jnp.stack(logprobs, axis=1)
         entropies = jnp.stack(entropies, axis=1)
-        logprobs = logprobs.sum(axis=1).squeeze()
+        # logprobs = logprobs.sum(axis=1).squeeze()
 
         value = critic.apply(params["critic_params"], hidden).squeeze()
         return logprobs, entropies, value
@@ -773,9 +773,15 @@ def run_rollout_loop(
         b_position_obs = storage.position_obs.reshape(
             (-1,) + env.observation_space[1]["position"].shape[1:]
         )
-        b_logprobs = storage.logprobs.reshape((-1,))
+        b_logprobs = storage.logprobs.reshape(
+            (-1,) + (env.total_action_space.shape[-1],)
+        )
         b_actions = storage.actions.reshape((-1,) + (env.total_action_space.shape[-1],))
         b_advantages = storage.advantages.reshape(-1)
+        # Repeat advantages for each action
+        b_advantages = jnp.repeat(
+            b_advantages[:, None], env.total_action_space.shape[-1], axis=1
+        )
         b_returns = storage.returns.reshape(-1)
         b_values = storage.values.reshape(-1)
         # Generate keys for all epochs
@@ -825,17 +831,7 @@ def run_rollout_loop(
             logratio = newlogprob - logp
             ratio = jnp.exp(logratio)
 
-            # jax.debug.callback(
-            #     debug_printer,
-            #     (
-            #         jnp.array(
-            #             [
-            #                 newlogprob,
-            #                 logp,
-            #             ]
-            #         )
-            #     ),
-            # )
+            # Calculate approx_kl per action and take mean
             approx_kl = ((ratio - 1) - logratio).mean()
 
             if args.norm_adv:
@@ -843,47 +839,15 @@ def run_rollout_loop(
                     mb_advantages.std() + 1e-8
                 )
 
-            # Policy loss
+            # Policy loss calculated per action
             pg_loss1 = -mb_advantages * ratio
             pg_loss2 = -mb_advantages * jnp.clip(
                 ratio, 1 - args.clip_coef, 1 + args.clip_coef
             )
-            # TODO: I'm very suspicious of this line. We are meaning the two
-            # logprobs for the actions together. Soon as we add extensions this
-            # will be a third action. We need to confirm this is right.
-            # jax.debug.visualize_array_sharding(
-            #     pg_loss1.reshape(pg_loss1.shape[:-2] + (-1,))
-            # )
-            # jax.debug.visualize_array_sharding(
-            #     pg_loss2.reshape(pg_loss2.shape[:-2] + (-1,))
-            # )
+
+            # Take mean across both batch and action dimensions
             pg_loss = jnp.maximum(pg_loss1, pg_loss2).mean()
-            # jax.debug.callback(
-            #     policy_printer,
-            #     (
-            #         jnp.array(
-            #             [
-            #                 pg_loss,
-            #             ]
-            #         )
-            #     ),
-            # )
 
-            # jax.debug.visualize_array_sharding(
-            #     pg_loss.reshape(pg_loss.shape[:-2] + (-1,))
-            # )
-
-            # jax.debug.callback(
-            #     debug_printer,
-            #     (
-            #         jnp.array(
-            #             [
-            #                 newvalue,
-            #                 mb_returns,
-            #             ]
-            #         )
-            #     ),
-            # )
             # Value loss
             if args.clip_vloss:
                 v_loss_unclipped = 0.5 * ((newvalue - mb_returns) ** 2).mean()
@@ -897,7 +861,6 @@ def run_rollout_loop(
                 v_loss = 0.5 * v_loss_max.mean()
             else:
                 v_loss = 0.5 * ((newvalue - mb_returns) ** 2).mean()
-            # jax.debug.callback(loss_printer, (v_loss,))
 
             entropy_loss = entropy.mean()
             loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef
