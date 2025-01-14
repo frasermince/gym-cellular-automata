@@ -974,7 +974,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         # Basic fire/tree ratio component
         t = counts[self._tree]
         f = counts[self._fire]
-        base_reward = -(f / (t + f))
+        base_reward = jnp.where(t + f > 0, -(f / (t + f)), 0.0)
 
         # Time pressure component (normalized to [0,1])
         time_step = per_env_context["time_step"]
@@ -1088,7 +1088,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             "p_fire": jnp.array(self._p_fire, dtype=jnp.float32),
             "p_tree": jnp.array(self._p_tree, dtype=jnp.float32),
             "p_wind_change": jnp.array(self._p_wind_change, dtype=jnp.float32),
-            "day_length": 20,
+            "day_length": 100,
         }
 
         init_context = {
