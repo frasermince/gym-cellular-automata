@@ -576,6 +576,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             "is_night",
             "current_day_length",
             "true_grid",
+            "time_step",
         }
 
         self.extension_map = [
@@ -660,7 +661,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         self._p_tree = 0.0005
         self._p_wind_change = 0.06
 
-        self._effects = {self._tree: self._bulldozed}  # Substitution Effect
+        self._effects = {self._fire: self._bulldozed}  # Substitution Effect
 
         # Time to do things
         # On Cellular Automaton (CA) updates units
@@ -1149,6 +1150,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             "is_night": jnp.zeros(self.num_envs, dtype=jnp.int32),
             "current_day_length": jnp.zeros(self.num_envs, dtype=jnp.int32),
             "true_grid": grid[..., 0],
+            "time_step": jnp.zeros(self.num_envs, dtype=jnp.int32),
         }
 
         # Shared context parameters
@@ -1473,7 +1475,7 @@ class MDP(Operator):
 
         # Store true grid state
         next_per_env_context["true_grid"] = grid
-
+        next_per_env_context["time_step"] = next_per_env_context["time_step"] + 1
         extended_grid = self.build_observation_on_extensions(
             grid, position, action, per_env_context, shared_context
         )
