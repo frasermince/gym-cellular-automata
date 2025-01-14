@@ -661,7 +661,10 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         self._p_tree = 0.0005
         self._p_wind_change = 0.06
 
-        self._effects = {self._fire: self._bulldozed}  # Substitution Effect
+        self._effects = {
+            self._fire: self._bulldozed,
+            self._tree: self._bulldozed,
+        }  # Substitution Effect
 
         # Time to do things
         # On Cellular Automaton (CA) updates units
