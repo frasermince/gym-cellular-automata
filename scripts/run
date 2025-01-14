@@ -474,7 +474,7 @@ def generate_gif_envs(args):
         speed_move=speed_move * speed_multiplier,
         speed_act=0.03 * speed_multiplier,
         use_hidden=not args.no_hidden,
-        middle_fire=True,
+        middle_fire=False,
         enable_extensions=args.enable_extensions,
     )
 
