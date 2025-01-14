@@ -1064,14 +1064,11 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
 
         if self._pos_bull is None:
             # Bulldozer Position for each env
-            # Around the upper right quadrant
+            # Fixed position 15% from upper right corner
             self._pos_bull = []
             for _ in range(self.num_envs):
-                r, c = (1 * self.nrows // 4), (3 * self.ncols // 4)
-
-                r = r + self._noise(self.nrows)
-                c = c + self._noise(self.ncols)
-
+                r = int(self.nrows * 0.15)  # 15% down from top
+                c = int(self.ncols * 0.85)  # 15% in from right
                 self._pos_bull.append((r, c))
 
         init_position = jnp.array(self._pos_bull)
