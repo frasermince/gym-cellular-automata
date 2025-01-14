@@ -354,8 +354,8 @@ def run_rollout_loop(
         episode_lengths=jnp.zeros(num_envs, dtype=jnp.int32),
         returned_episode_returns=jnp.zeros(num_envs, dtype=jnp.float32),
         returned_episode_lengths=jnp.zeros(num_envs, dtype=jnp.int32),
-        recent_returns=jnp.zeros(5, dtype=jnp.float32),
-        recent_lengths=jnp.zeros(5, dtype=jnp.int32),
+        recent_returns=jnp.zeros(20, dtype=jnp.float32),
+        recent_lengths=jnp.zeros(20, dtype=jnp.int32),
         recent_idx=jnp.array(0, dtype=jnp.int32),
     )
     # handle, recv, send, step_env = envs.xla()
@@ -393,7 +393,7 @@ def run_rollout_loop(
                     stats.recent_lengths.at[new_idx].set(lengths[env_idx]),
                     stats.recent_lengths,
                 )
-                new_idx = (new_idx + mask[env_idx].astype(jnp.int32)) % 5
+                new_idx = (new_idx + mask[env_idx].astype(jnp.int32)) % 20
 
                 return (
                     (
@@ -414,7 +414,9 @@ def run_rollout_loop(
                 body_fun, (stats, returns, lengths, mask), jnp.arange(mask.shape[0])
             )
 
-            return final_stats.replace(recent_idx=(stats.recent_idx + num_finished) % 5)
+            return final_stats.replace(
+                recent_idx=(stats.recent_idx + num_finished) % 20
+            )
 
         finished_mask = next_info["terminated"] + next_info["TimeLimit.truncated"]
         current_episode_stats = update_recent_stats(
@@ -1045,8 +1047,8 @@ def run_rollout_loop(
             "avg_episode_length": "0.0",
             # "avg_returned_episode_length": "0.0",
             "avg_return_per_timestep": "0.0",
-            "recent_5_return": "0.0",
-            "recent_5_length": "0.0",
+            "recent_20_return": "0.0",
+            "recent_20_length": "0.0",
             "value_loss": "0.0",
             "policy_loss": "0.0",
             "entropy_loss": "0.0",
@@ -1219,8 +1221,8 @@ def run_rollout_loop(
                     "games_finished": int(jax.device_get(total_finished)),
                     # "avg_returned_episode_length": f"{avg_returned_episode_length:.2f}",
                     "avg_return_per_timestep": f"{avg_return_per_timestep:.4f}",
-                    "recent_5_return": f"{recent_avg_return:.2f}",
-                    "recent_5_length": f"{recent_avg_length:.2f}",
+                    "recent_20_return": f"{recent_avg_return:.2f}",
+                    "recent_20_length": f"{recent_avg_length:.2f}",
                     "value_loss": f"{v_loss.item():.4f}",
                     "policy_loss": f"{pg_loss.item():.4f}",
                     "entropy_loss": f"{entropy_loss.item():.4f}",
