@@ -200,14 +200,15 @@ class Actor(nn.Module):
 
     @nn.compact
     def __call__(self, x):
-        features = nn.Dense(
-            64, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0)
-        )(x)
-        features = nn.relu(features)
-        features = nn.Dense(
-            64, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0)
-        )(features)
-        features = nn.relu(features)
+        # features = nn.Dense(
+        #     64, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0)
+        # )(x)
+        # features = nn.relu(features)
+        # features = nn.Dense(
+        #     64, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0)
+        # )(features)
+        # features = nn.relu(features)
+        features = x
 
         # Create logits for each action dimension
         logits = []
