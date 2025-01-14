@@ -798,9 +798,9 @@ def run_rollout_loop(
         num_minibatches = args.batch_size // args.minibatch_size
         # vmap the permutation generation over epoch keys
         permutations = jax.vmap(
-            lambda k: jax.random.permutation(k, args.batch_size).reshape(
-                (num_minibatches, args.minibatch_size)
-            )
+            lambda k: jax.random.permutation(
+                k, args.batch_size, independent=True
+            ).reshape((num_minibatches, args.minibatch_size))
         )(permutation_keys)
 
         if len(jax.devices()) >= 4 and not SHARD_STORAGE and SHOULD_SHARD:
