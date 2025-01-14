@@ -979,11 +979,11 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         # Time pressure component (normalized to [0,1])
         time_step = per_env_context["time_step"]
         time_penalty = jnp.minimum(
-            time_step / 100.0, 2.0
+            time_step / 100.0, 4.0
         )  # Caps at -1.0 after 200 steps
 
         # Combine and map to [-1,1]
-        raw_reward = base_reward - time_penalty
+        raw_reward = 1 + base_reward - time_penalty
         return jnp.tanh(raw_reward)
 
     def _is_done(self, grid):
