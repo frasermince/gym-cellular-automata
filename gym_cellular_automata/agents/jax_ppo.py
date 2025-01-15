@@ -122,32 +122,61 @@ class Network(nn.Module):
 
     @nn.compact
     def __call__(self, grid):
-        x = nn.Conv(
-            32,
-            kernel_size=(8, 8),
-            strides=(4, 4),
-            padding="VALID",
-            kernel_init=orthogonal(np.sqrt(2)),
-            bias_init=constant(0.0),
-        )(grid)
-        x = nn.relu(x)
-        x = nn.Conv(
-            64,
-            kernel_size=(4, 4),
-            strides=(2, 2),
-            padding="VALID",
-            kernel_init=orthogonal(np.sqrt(2)),
-            bias_init=constant(0.0),
-        )(x)
-        x = nn.relu(x)
-        x = nn.Conv(
-            64,
-            kernel_size=(3, 3),
-            strides=(1, 1),
-            padding="VALID",
-            kernel_init=orthogonal(np.sqrt(2)),
-            bias_init=constant(0.0),
-        )(x)
+        if grid.shape[1] <= 16:
+            # For small grids, use smaller strides
+            x = nn.Conv(
+                32,
+                kernel_size=(3, 3),
+                strides=(1, 1),  # Reduced stride
+                padding="VALID",
+                kernel_init=orthogonal(np.sqrt(2)),
+                bias_init=constant(0.0),
+            )(grid)
+            x = nn.relu(x)
+            x = nn.Conv(
+                64,
+                kernel_size=(3, 3),
+                strides=(1, 1),  # Reduced stride
+                padding="VALID",
+                kernel_init=orthogonal(np.sqrt(2)),
+                bias_init=constant(0.0),
+            )(x)
+            x = nn.relu(x)
+            x = nn.Conv(
+                64,
+                kernel_size=(2, 2),
+                strides=(1, 1),  # Reduced stride
+                padding="VALID",
+                kernel_init=orthogonal(np.sqrt(2)),
+                bias_init=constant(0.0),
+            )(x)
+        else:
+            x = nn.Conv(
+                32,
+                kernel_size=(8, 8),
+                strides=(4, 4),
+                padding="VALID",
+                kernel_init=orthogonal(np.sqrt(2)),
+                bias_init=constant(0.0),
+            )(grid)
+            x = nn.relu(x)
+            x = nn.Conv(
+                64,
+                kernel_size=(4, 4),
+                strides=(2, 2),
+                padding="VALID",
+                kernel_init=orthogonal(np.sqrt(2)),
+                bias_init=constant(0.0),
+            )(x)
+            x = nn.relu(x)
+            x = nn.Conv(
+                64,
+                kernel_size=(3, 3),
+                strides=(1, 1),
+                padding="VALID",
+                kernel_init=orthogonal(np.sqrt(2)),
+                bias_init=constant(0.0),
+            )(x)
         x = nn.relu(x)
         x = x.reshape((x.shape[0], -1))
         x = nn.Dense(512, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
