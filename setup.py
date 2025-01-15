@@ -1,19 +1,12 @@
 import os
 import sys
-
 from setuptools import setup
 
-# Don't import gym_cellular_automata module here, since deps may not be installed
+# Handle version import without importing the full package
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "gym_cellular_automata"))
 from version import VERSION
 
-# pip install jax[tpu] -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
-# pip install MoviePy
-# pip install gif
-# pip install flax
-# pip install torch
-# pip install tensorboard
-# pip install wandb
+# For TPU support: pip install jax[tpu] -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
 setup(
     name="gym_cellular_automata",
     packages=["gym_cellular_automata"],
@@ -29,6 +22,14 @@ setup(
         "matplotlib",
         "scipy",
         "svgpath2mpl",
+        "jax",
+        "jaxlib",
+        "moviepy",
+        "gif",
+        "flax",
+        "torch",
+        "tensorboard",
+        "wandb",
     ],
     tests_require=["pytest", "pytest-cov", "pytest-repeat", "pytest-randomly"],
     python_requires=">=3.9",
