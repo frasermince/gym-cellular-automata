@@ -1,40 +1,6 @@
 # Gym Cellular Automata
 ---
 
-## Extended Mind Specific Instructions
-### Running the Project
-Both training and eval can be controlled through ./scripts/run. This will handle
-* Performing a training run
-* Evaluating a model if --no-train with params --params or at random if not specified
-* Turning on and off hidden state such as foilage type, and altitude with --no-hiden
-* Turning on and off the extensions with --enable-extensions
-
-Below are the list of commands I plan to do for a full learning rate and seed hyperparameter search:
-./scripts/run -s 10000 -n 1 -z 64 --no-hidden --key=1 --learning-rate="1e-3" --track --enable-extensions --speed-multiplier=4 
-./scripts/run -s 10000 -n 1 -z 64 --no-hidden --key=1 --learning-rate="5e-3" --track --enable-extensions --speed-multiplier=4 
-./scripts/run -s 10000 -n 1 -z 64 --no-hidden --key=1 --learning-rate="1e-4" --track --enable-extensions --speed-multiplier=4 
-./scripts/run -s 10000 -n 1 -z 64 --no-hidden --key=1 --learning-rate="5e-4" --track --enable-extensions --speed-multiplier=4 
-./scripts/run -s 10000 -n 1 -z 64 --no-hidden --key=1 --learning-rate="1e-5" --track --enable-extensions --speed-multiplier=4 
-
-./scripts/run -s 10000 -n 1 -z 64 --no-hidden --key=2 --learning-rate="1e-3" --track --enable-extensions --speed-multiplier=4 
-./scripts/run -s 10000 -n 1 -z 64 --no-hidden --key=2 --learning-rate="5e-3" --track --enable-extensions --speed-multiplier=4 
-./scripts/run -s 10000 -n 1 -z 64 --no-hidden --key=2 --learning-rate="1e-4" --track --enable-extensions --speed-multiplier=4 
-./scripts/run -s 10000 -n 1 -z 64 --no-hidden --key=2 --learning-rate="5e-4" --track --enable-extensions --speed-multiplier=4 
-./scripts/run -s 10000 -n 1 -z 64 --no-hidden --key=2 --learning-rate="1e-5" --track --enable-extensions --speed-multiplier=4 
-
-./scripts/run -s 10000 -n 1 -z 64 --no-hidden --key=3 --learning-rate="1e-3" --track --enable-extensions --speed-multiplier=4 
-./scripts/run -s 10000 -n 1 -z 64 --no-hidden --key=3 --learning-rate="5e-3" --track --enable-extensions --speed-multiplier=4 
-./scripts/run -s 10000 -n 1 -z 64 --no-hidden --key=3 --learning-rate="1e-4" --track --enable-extensions --speed-multiplier=4 
-./scripts/run -s 10000 -n 1 -z 64 --no-hidden --key=3 --learning-rate="5e-4" --track --enable-extensions --speed-multiplier=4 
-./scripts/run -s 10000 -n 1 -z 64 --no-hidden --key=3 --learning-rate="1e-5" --track --enable-extensions --speed-multiplier=4 
-
-### Files of Note
-The main additions to this project are the following
-* Advanced Bulldozer Environment - gym_cellular_automata/forest_fire/bulldozer/advanced_bulldozer.py environment that includes hidden information.
-* Alexandridis Jax operator - gym_cellular_automata/forest_fire/operators/ca_alexandridis_jax.py responsible for updating the state of the grid given the hidden information. Based on the paper https://www.sciencedirect.com/science/article/abs/pii/S0096300308004943
-* Jax operators to move, modify the grid, and keep time - I tried to create new files for these to avoid breaking the original behavior of the repo. We will still need to confirm that this is true.
-* Advanced Bulldozer Rendering - gym_cellular_automata/forest_fire/bulldozer/utils/advanced_bulldozer_render.py Specific rendering around bulldozer with hidden state.
-
 
 <p align="center">
     <a href="pics/gym_cellular_automata.svg"><img src="pics/gym_cellular_automata.svg"></a>
@@ -60,6 +26,44 @@ The available RLEs are based on [Cellular Automata](https://en.wikipedia.org/wik
 git clone https://github.com/elbecerrasoto/gym-cellular-automata
 pip install -e gym-cellular-automata
 ```
+
+## Extended Mind Specific Instructions
+### Running the Project
+Both training and eval can be controlled through ./scripts/run. This will handle
+* Performing a training run
+* Evaluating a model if `--no-train` with params `--params` or at random if not specified
+* Turning on and off hidden state such as foilage type, and altitude with `--no-hidden`
+* Turning on and off the extensions with `--enable-extensions`
+
+Below are the list of commands I plan to do for a full learning rate and seed hyperparameter search:
+```bash
+./scripts/run -s 10000 -n 1 -z 64 --no-hidden --key=1 --learning-rate="1e-3" --track --enable-extensions --speed-multiplier=4 
+./scripts/run -s 10000 -n 1 -z 64 --no-hidden --key=1 --learning-rate="5e-3" --track --enable-extensions --speed-multiplier=4 
+./scripts/run -s 10000 -n 1 -z 64 --no-hidden --key=1 --learning-rate="1e-4" --track --enable-extensions --speed-multiplier=4 
+./scripts/run -s 10000 -n 1 -z 64 --no-hidden --key=1 --learning-rate="5e-4" --track --enable-extensions --speed-multiplier=4 
+./scripts/run -s 10000 -n 1 -z 64 --no-hidden --key=1 --learning-rate="1e-5" --track --enable-extensions --speed-multiplier=4 
+
+./scripts/run -s 10000 -n 1 -z 64 --no-hidden --key=2 --learning-rate="1e-3" --track --enable-extensions --speed-multiplier=4 
+./scripts/run -s 10000 -n 1 -z 64 --no-hidden --key=2 --learning-rate="5e-3" --track --enable-extensions --speed-multiplier=4 
+./scripts/run -s 10000 -n 1 -z 64 --no-hidden --key=2 --learning-rate="1e-4" --track --enable-extensions --speed-multiplier=4 
+./scripts/run -s 10000 -n 1 -z 64 --no-hidden --key=2 --learning-rate="5e-4" --track --enable-extensions --speed-multiplier=4 
+./scripts/run -s 10000 -n 1 -z 64 --no-hidden --key=2 --learning-rate="1e-5" --track --enable-extensions --speed-multiplier=4 
+
+./scripts/run -s 10000 -n 1 -z 64 --no-hidden --key=3 --learning-rate="1e-3" --track --enable-extensions --speed-multiplier=4 
+./scripts/run -s 10000 -n 1 -z 64 --no-hidden --key=3 --learning-rate="5e-3" --track --enable-extensions --speed-multiplier=4 
+./scripts/run -s 10000 -n 1 -z 64 --no-hidden --key=3 --learning-rate="1e-4" --track --enable-extensions --speed-multiplier=4 
+./scripts/run -s 10000 -n 1 -z 64 --no-hidden --key=3 --learning-rate="5e-4" --track --enable-extensions --speed-multiplier=4 
+./scripts/run -s 10000 -n 1 -z 64 --no-hidden --key=3 --learning-rate="1e-5" --track --enable-extensions --speed-multiplier=4 
+```
+
+### Files of Note
+The main additions to this project are the following
+* Advanced Bulldozer Environment - gym_cellular_automata/forest_fire/bulldozer/advanced_bulldozer.py environment that includes hidden information.
+* Alexandridis Jax operator - gym_cellular_automata/forest_fire/operators/ca_alexandridis_jax.py responsible for updating the state of the grid given the hidden information. Based on the paper https://www.sciencedirect.com/science/article/abs/pii/S0096300308004943
+* Jax operators to move, modify the grid, and keep time - I tried to create new files for these to avoid breaking the original behavior of the repo. We will still need to confirm that this is true.
+* Advanced Bulldozer Rendering - gym_cellular_automata/forest_fire/bulldozer/utils/advanced_bulldozer_render.py Specific rendering around bulldozer with hidden state.
+* PPO Agent - gym_cellular_automata/agents/jax_ppo.py taken from CleanRL
+
 
 ## Usage
 
