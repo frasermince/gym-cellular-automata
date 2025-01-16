@@ -37,23 +37,23 @@ Both training and eval can be controlled through ./scripts/run. This will handle
 
 Below are the list of commands I plan to do for a full learning rate and seed hyperparameter search:
 ```bash
-./scripts/run -s 10000 -n 1 -z 64 --no-hidden --key=1 --learning-rate="1e-3" --track --enable-extensions --speed-multiplier=4 
-./scripts/run -s 10000 -n 1 -z 64 --no-hidden --key=1 --learning-rate="5e-3" --track --enable-extensions --speed-multiplier=4 
-./scripts/run -s 10000 -n 1 -z 64 --no-hidden --key=1 --learning-rate="1e-4" --track --enable-extensions --speed-multiplier=4 
-./scripts/run -s 10000 -n 1 -z 64 --no-hidden --key=1 --learning-rate="5e-4" --track --enable-extensions --speed-multiplier=4 
-./scripts/run -s 10000 -n 1 -z 64 --no-hidden --key=1 --learning-rate="1e-5" --track --enable-extensions --speed-multiplier=4 
+./scripts/run -s 10000 -n 1 -z 64 --no-hidden --seed=1 --learning-rate="1e-3" --track --enable-extensions --speed-multiplier=4 
+./scripts/run -s 10000 -n 1 -z 64 --no-hidden --seed=1 --learning-rate="5e-3" --track --enable-extensions --speed-multiplier=4 
+./scripts/run -s 10000 -n 1 -z 64 --no-hidden --seed=1 --learning-rate="1e-4" --track --enable-extensions --speed-multiplier=4 
+./scripts/run -s 10000 -n 1 -z 64 --no-hidden --seed=1 --learning-rate="5e-4" --track --enable-extensions --speed-multiplier=4 
+./scripts/run -s 10000 -n 1 -z 64 --no-hidden --seed=1 --learning-rate="1e-5" --track --enable-extensions --speed-multiplier=4 
 
-./scripts/run -s 10000 -n 1 -z 64 --no-hidden --key=2 --learning-rate="1e-3" --track --enable-extensions --speed-multiplier=4 
-./scripts/run -s 10000 -n 1 -z 64 --no-hidden --key=2 --learning-rate="5e-3" --track --enable-extensions --speed-multiplier=4 
-./scripts/run -s 10000 -n 1 -z 64 --no-hidden --key=2 --learning-rate="1e-4" --track --enable-extensions --speed-multiplier=4 
-./scripts/run -s 10000 -n 1 -z 64 --no-hidden --key=2 --learning-rate="5e-4" --track --enable-extensions --speed-multiplier=4 
-./scripts/run -s 10000 -n 1 -z 64 --no-hidden --key=2 --learning-rate="1e-5" --track --enable-extensions --speed-multiplier=4 
+./scripts/run -s 10000 -n 1 -z 64 --no-hidden --seed=2 --learning-rate="1e-3" --track --enable-extensions --speed-multiplier=4 
+./scripts/run -s 10000 -n 1 -z 64 --no-hidden --seed=2 --learning-rate="5e-3" --track --enable-extensions --speed-multiplier=4 
+./scripts/run -s 10000 -n 1 -z 64 --no-hidden --seed=2 --learning-rate="1e-4" --track --enable-extensions --speed-multiplier=4 
+./scripts/run -s 10000 -n 1 -z 64 --no-hidden --seed=2 --learning-rate="5e-4" --track --enable-extensions --speed-multiplier=4 
+./scripts/run -s 10000 -n 1 -z 64 --no-hidden --seed=2 --learning-rate="1e-5" --track --enable-extensions --speed-multiplier=4 
 
-./scripts/run -s 10000 -n 1 -z 64 --no-hidden --key=3 --learning-rate="1e-3" --track --enable-extensions --speed-multiplier=4 
-./scripts/run -s 10000 -n 1 -z 64 --no-hidden --key=3 --learning-rate="5e-3" --track --enable-extensions --speed-multiplier=4 
-./scripts/run -s 10000 -n 1 -z 64 --no-hidden --key=3 --learning-rate="1e-4" --track --enable-extensions --speed-multiplier=4 
-./scripts/run -s 10000 -n 1 -z 64 --no-hidden --key=3 --learning-rate="5e-4" --track --enable-extensions --speed-multiplier=4 
-./scripts/run -s 10000 -n 1 -z 64 --no-hidden --key=3 --learning-rate="1e-5" --track --enable-extensions --speed-multiplier=4 
+./scripts/run -s 10000 -n 1 -z 64 --no-hidden --seed=3 --learning-rate="1e-3" --track --enable-extensions --speed-multiplier=4 
+./scripts/run -s 10000 -n 1 -z 64 --no-hidden --seed=3 --learning-rate="5e-3" --track --enable-extensions --speed-multiplier=4 
+./scripts/run -s 10000 -n 1 -z 64 --no-hidden --seed=3 --learning-rate="1e-4" --track --enable-extensions --speed-multiplier=4 
+./scripts/run -s 10000 -n 1 -z 64 --no-hidden --seed=3 --learning-rate="5e-4" --track --enable-extensions --speed-multiplier=4 
+./scripts/run -s 10000 -n 1 -z 64 --no-hidden --seed=3 --learning-rate="1e-5" --track --enable-extensions --speed-multiplier=4 
 ```
 
 ### Files of Note

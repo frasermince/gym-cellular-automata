@@ -21,6 +21,7 @@ from flax.training.train_state import TrainState
 from torch.utils.tensorboard import SummaryWriter
 from jax.experimental import host_callback
 import math
+from gym_cellular_automata.agents.args import Args
 
 
 def policy_printer(args):
@@ -51,70 +52,6 @@ if jax.devices()[0].platform == "tpu":
 SHARD_STORAGE = False
 SHOULD_SHARD = False
 # jax.config.update("jax_default_matmul_precision", "bfloat16")
-
-
-@dataclass
-class Args:
-    exp_name: str = os.path.basename(__file__)[: -len(".py")]
-    """the name of this experiment"""
-    seed: int = 1
-    """seed of the experiment"""
-    torch_deterministic: bool = True
-    """if toggled, `torch.backends.cudnn.deterministic=False`"""
-    cuda: bool = True
-    """if toggled, cuda will be enabled by default"""
-    track: bool = False
-    """if toggled, this experiment will be tracked with Weights and Biases"""
-    wandb_project_name: str = "extended-mind"
-    """the wandb's project name"""
-    wandb_entity: str = "glen-berseth"
-    """the entity (team) of wandb's project"""
-    capture_video: bool = False
-    """whether to capture videos of the agent performances (check out `videos` folder)"""
-
-    # Algorithm specific arguments
-    env_id: str = "Firefighter"
-    """the id of the environment"""
-    total_timesteps: int = 10000000
-    """total timesteps of the experiments"""
-    learning_rate: float = 2.5e-4
-    """the learning rate of the optimizer"""
-    num_envs: int = 1
-    """the number of parallel game environments"""
-    num_steps: int = 128
-    """the number of steps to run in each environment per policy rollout"""
-    anneal_lr: bool = True
-    """Toggle learning rate annealing for policy and value networks"""
-    gamma: float = 0.99
-    """the discount factor gamma"""
-    gae_lambda: float = 0.95
-    """the lambda for the general advantage estimation"""
-    num_minibatches: int = 4
-    """the number of mini-batches"""
-    update_epochs: int = 4
-    """the K epochs to update the policy"""
-    norm_adv: bool = True
-    """Toggles advantages normalization"""
-    clip_coef: float = 0.1
-    """the surrogate clipping coefficient"""
-    clip_vloss: bool = True
-    """Toggles whether or not to use a clipped loss for the value function, as per the paper."""
-    ent_coef: float = 0.01
-    """coefficient of the entropy"""
-    vf_coef: float = 0.5
-    """coefficient of the value function"""
-    max_grad_norm: float = 0.5
-    """the maximum norm for the gradient clipping"""
-    target_kl: float = None
-    """the target KL divergence threshold"""
-
-    # to be filled in runtime
-    batch_size: int = 0
-    """the batch size (computed in runtime)"""
-    minibatch_size: int = 0
-    """the mini-batch size (computed in runtime)"""
-    num_iterations: int = 0
-    """the number of iterations (computed in runtime)"""
 
 
 class Network(nn.Module):
@@ -286,24 +223,21 @@ def build_storage_return(storage, env):
     return {"grid_obs": grid_obs, "position_obs": position_obs, "contexts": contexts}
 
 
-# 100,000 should be sufficient 100,000 / 128 = 781.25
 def run_rollout_loop(
     env,
-    num_iterations,
-    num_envs=8,
-    recording_times=8,
-    frames_per_recording=8,
-    use_gif=False,
+    args: Args,  # Accept structured Args directly
     key=jax.random.key(0),
-    learning_rate=2.5e-4,
-    device_index=0,
-    track=False,
 ):
-    args = Args()
-    args.batch_size = int(num_envs * args.num_steps)
-    args.minibatch_size = int(args.batch_size // args.num_minibatches)
-    args.num_iterations = args.total_timesteps // args.batch_size
-    run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
+    """Run PPO training loop
+
+    Args:
+        env: Environment to train on
+        args: Structured arguments container
+        key: JAX random key
+    """
+    run_name = (
+        f"{args.env.env_id}__{args.exp.exp_name}__{args.exp.seed}__{int(time.time())}"
+    )
     checkpoint_options = orbax.checkpoint.CheckpointManagerOptions(
         max_to_keep=2, create=True
     )
@@ -313,12 +247,12 @@ def run_rollout_loop(
         orbax.checkpoint.args.StandardSave,
         orbax.checkpoint.StandardCheckpointHandler,
     )
-    if track:
+    if args.exp.track:
         import wandb
 
         wandb.init(
-            project=args.wandb_project_name,
-            entity=args.wandb_entity,
+            project=args.exp.wandb_project_name,
+            entity=args.exp.wandb_entity,
             sync_tensorboard=True,
             config=vars(args),
             name=run_name,
@@ -333,8 +267,8 @@ def run_rollout_loop(
     )
 
     # TRY NOT TO MODIFY: seeding
-    random.seed(args.seed)
-    np.random.seed(args.seed)
+    random.seed(args.exp.seed)
+    np.random.seed(args.exp.seed)
     key, network_key, actor_key, critic_key = jax.random.split(key, 4)
 
     # env setup
@@ -351,10 +285,10 @@ def run_rollout_loop(
     # envs.observation_space = envs.observation_space
     # envs.is_vector_env = True
     episode_stats = EpisodeStatistics(
-        episode_returns=jnp.zeros(num_envs, dtype=jnp.float32),
-        episode_lengths=jnp.zeros(num_envs, dtype=jnp.int32),
-        returned_episode_returns=jnp.zeros(num_envs, dtype=jnp.float32),
-        returned_episode_lengths=jnp.zeros(num_envs, dtype=jnp.int32),
+        episode_returns=jnp.zeros(args.env.num_envs, dtype=jnp.float32),
+        episode_lengths=jnp.zeros(args.env.num_envs, dtype=jnp.int32),
+        returned_episode_returns=jnp.zeros(args.env.num_envs, dtype=jnp.float32),
+        returned_episode_lengths=jnp.zeros(args.env.num_envs, dtype=jnp.int32),
         recent_returns=jnp.zeros(10, dtype=jnp.float32),
         recent_lengths=jnp.zeros(10, dtype=jnp.int32),
         recent_idx=jnp.array(0, dtype=jnp.int32),
@@ -478,7 +412,7 @@ def run_rollout_loop(
         # (args.num_minibatches * args.update_epochs) gradient updates
         frac = (
             1.0
-            - (count // (args.num_minibatches * args.update_epochs))
+            - (count // (args.ppo.num_minibatches * args.ppo.update_epochs))
             / args.num_iterations
         )
         return learning_rate * frac
@@ -516,9 +450,11 @@ def run_rollout_loop(
             }
         ),
         tx=optax.chain(
-            optax.clip_by_global_norm(args.max_grad_norm),
+            optax.clip_by_global_norm(args.ppo.max_grad_norm),
             optax.inject_hyperparams(optax.adam)(
-                learning_rate=linear_schedule if args.anneal_lr else learning_rate,
+                learning_rate=(
+                    linear_schedule if args.ppo.anneal_lr else args.ppo.learning_rate
+                ),
                 eps=1e-5,
             ),
         ),
@@ -534,88 +470,90 @@ def run_rollout_loop(
         mesh = jax.make_mesh((4,), ("devices"))
         with mesh:
             contexts = {}
-            if use_gif:
+            if args.viz.gif:
                 for context_key in env.per_env_context_keys:
                     contexts[context_key] = jax.device_put(
                         jnp.zeros(
-                            (args.num_steps,) + per_env_context[context_key].shape
+                            (args.exp.num_ppo_steps,)
+                            + per_env_context[context_key].shape
                         ),
                         NamedSharding(mesh, P("devices", None)),
                     )
                 contexts["time"] = jax.device_put(
-                    jnp.zeros((args.num_steps,) + context["time"].shape),
+                    jnp.zeros((args.exp.num_ppo_steps,) + context["time"].shape),
                     NamedSharding(mesh, P("devices", None)),
                 )
             storage = Storage(
                 grid_obs=jax.device_put(
-                    jnp.zeros((args.num_steps,) + grid.shape),
+                    jnp.zeros((args.exp.num_ppo_steps,) + grid.shape),
                     NamedSharding(mesh, P("devices", None, None, None)),
                 ),
                 position_obs=jax.device_put(
                     jnp.zeros(
-                        (args.num_steps,) + context["position"].shape, dtype=jnp.int32
+                        (args.exp.num_ppo_steps,) + context["position"].shape,
+                        dtype=jnp.int32,
                     ),
                     NamedSharding(mesh, P("devices", None)),
                 ),
                 contexts=contexts,
                 actions=jax.device_put(
                     jnp.zeros(
-                        (args.num_steps,) + env.total_action_space.shape,
+                        (args.exp.num_ppo_steps,) + env.total_action_space.shape,
                         dtype=jnp.int32,
                     ),
                     NamedSharding(mesh, P("devices", None)),
                 ),
                 logprobs=jax.device_put(
-                    jnp.zeros((args.num_steps, *env.total_action_space.shape)),
+                    jnp.zeros((args.exp.num_ppo_steps, *env.total_action_space.shape)),
                     NamedSharding(mesh, P("devices", None)),
                 ),
                 dones=jax.device_put(
-                    jnp.zeros((args.num_steps, num_envs)),
+                    jnp.zeros((args.exp.num_ppo_steps, args.env.num_envs)),
                     NamedSharding(mesh, P("devices")),
                 ),
                 values=jax.device_put(
-                    jnp.zeros((args.num_steps, num_envs)),
+                    jnp.zeros((args.exp.num_ppo_steps, args.env.num_envs)),
                     NamedSharding(mesh, P("devices")),
                 ),
                 advantages=jax.device_put(
-                    jnp.zeros((args.num_steps, num_envs)),
+                    jnp.zeros((args.exp.num_ppo_steps, args.env.num_envs)),
                     NamedSharding(mesh, P("devices")),
                 ),
                 returns=jax.device_put(
-                    jnp.zeros((args.num_steps, num_envs)),
+                    jnp.zeros((args.exp.num_ppo_steps, args.env.num_envs)),
                     NamedSharding(mesh, P("devices")),
                 ),
                 rewards=jax.device_put(
-                    jnp.zeros((args.num_steps, num_envs)),
+                    jnp.zeros((args.exp.num_ppo_steps, args.env.num_envs)),
                     NamedSharding(mesh, P("devices")),
                 ),
             )
     else:
         contexts = {}
-        if use_gif:
+        if args.viz.gif:
             for context_key in env.per_env_context_keys:
                 if context_key in per_env_context.keys():
                     contexts[context_key] = jnp.zeros(
-                        (args.num_steps,) + per_env_context[context_key].shape
+                        (args.exp.num_ppo_steps,) + per_env_context[context_key].shape
                     )
             contexts["time"] = jax.device_put(
-                jnp.zeros((args.num_steps,) + context["time"].shape),
+                jnp.zeros((args.exp.num_ppo_steps,) + context["time"].shape),
             )
         storage = Storage(
-            grid_obs=jnp.zeros((args.num_steps,) + grid.shape),
+            grid_obs=jnp.zeros((args.exp.num_ppo_steps,) + grid.shape),
             position_obs=jnp.zeros(
-                (args.num_steps,) + context["position"].shape, dtype=jnp.int32
+                (args.exp.num_ppo_steps,) + context["position"].shape, dtype=jnp.int32
             ),
             actions=jnp.zeros(
-                (args.num_steps,) + env.total_action_space.shape,
+                (args.exp.num_ppo_steps,) + env.total_action_space.shape,
                 dtype=jnp.int32,
             ),
-            logprobs=jnp.zeros((args.num_steps, *env.total_action_space.shape)),
-            dones=jnp.zeros((args.num_steps, num_envs)),
-            values=jnp.zeros((args.num_steps, num_envs)),
-            advantages=jnp.zeros((args.num_steps, num_envs)),
-            returns=jnp.zeros((args.num_steps, num_envs)),
-            rewards=jnp.zeros((args.num_steps, num_envs)),
+            logprobs=jnp.zeros((args.exp.num_ppo_steps, *env.total_action_space.shape)),
+            dones=jnp.zeros((args.exp.num_ppo_steps, args.env.num_envs)),
+            values=jnp.zeros((args.exp.num_ppo_steps, args.env.num_envs)),
+            advantages=jnp.zeros((args.exp.num_ppo_steps, args.env.num_envs)),
+            returns=jnp.zeros((args.exp.num_ppo_steps, args.env.num_envs)),
+            rewards=jnp.zeros((args.exp.num_ppo_steps, args.env.num_envs)),
             contexts=contexts,
         )
 
@@ -656,7 +594,7 @@ def run_rollout_loop(
         value = critic.apply(agent_state.params["critic_params"], hidden)
 
         new_contexts = dict(storage.contexts)  # Create a new dict
-        if use_gif:
+        if args.viz.gif:
             per_env_context = context["per_env_context"]
             for context_key in env.per_env_context_keys:
                 if (
@@ -737,25 +675,23 @@ def run_rollout_loop(
         def gae_step(carry, t):
             lastgaelam, storage = carry
             nextnonterminal = jax.lax.cond(
-                t == args.num_steps - 1,
+                t == args.exp.num_ppo_steps - 1,
                 lambda _: 1.0 - next_done,
                 lambda _: 1.0 - storage.dones[t + 1],
                 None,
             )
             nextvalues = jax.lax.cond(
-                t == args.num_steps - 1,
+                t == args.exp.num_ppo_steps - 1,
                 lambda _: next_value,
                 lambda _: storage.values[t + 1],
                 None,
             )
             delta = (
                 storage.rewards[t]
-                + args.gamma * nextvalues * nextnonterminal
+                + args.ppo.gamma * nextvalues * nextnonterminal
                 - storage.values[t]
             )
-            lastgaelam = (
-                delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
-            )
+            lastgaelam = delta + args.ppo.gae_lambda * nextnonterminal * lastgaelam
 
             storage = storage.replace(
                 advantages=storage.advantages.at[t].set(lastgaelam)
@@ -763,7 +699,9 @@ def run_rollout_loop(
             return (lastgaelam, storage), None
 
         (lastgaelam, storage), _ = jax.lax.scan(
-            gae_step, (lastgaelam, storage), jnp.arange(args.num_steps - 1, -1, -1)
+            gae_step,
+            (lastgaelam, storage),
+            jnp.arange(args.exp.num_ppo_steps - 1, -1, -1),
         )
         storage = storage.replace(returns=storage.advantages + storage.values)
         return storage
@@ -777,7 +715,7 @@ def run_rollout_loop(
         # Calculate approx_kl per action and take mean
         approx_kl = ((ratio - 1) - logratio).mean()
 
-        if args.norm_adv:
+        if args.ppo.norm_adv:
             mb_advantages = (mb_advantages - mb_advantages.mean()) / (
                 mb_advantages.std() + 1e-8
             )
@@ -785,19 +723,19 @@ def run_rollout_loop(
         # Policy loss calculated per action
         pg_loss1 = -mb_advantages * ratio
         pg_loss2 = -mb_advantages * jnp.clip(
-            ratio, 1 - args.clip_coef, 1 + args.clip_coef
+            ratio, 1 - args.ppo.clip_coef, 1 + args.ppo.clip_coef
         )
 
         # Take mean across both batch and action dimensions
         pg_loss = jnp.maximum(pg_loss1, pg_loss2).mean()
 
         # Value loss
-        if args.clip_vloss:
+        if args.ppo.clip_vloss:
             v_loss_unclipped = 0.5 * ((newvalue - mb_returns) ** 2).mean()
             v_clipped = mb_values + jnp.clip(
                 newvalue - mb_values,
-                -args.clip_coef,
-                args.clip_coef,
+                -args.ppo.clip_coef,
+                args.ppo.clip_coef,
             )
             v_loss_clipped = (v_clipped - mb_returns) ** 2
             v_loss_max = jnp.maximum(v_loss_unclipped, v_loss_clipped)
@@ -806,7 +744,7 @@ def run_rollout_loop(
             v_loss = 0.5 * ((newvalue - mb_returns) ** 2).mean()
 
         entropy_loss = entropy.mean()
-        loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef
+        loss = pg_loss - args.ppo.ent_coef * entropy_loss + v_loss * args.ppo.vf_coef
         return loss, (
             pg_loss,
             v_loss,
@@ -832,7 +770,7 @@ def run_rollout_loop(
             # taken from: https://github.com/google/brax/blob/main/brax/training/agents/ppo/train.py
             def convert_data(x: jnp.ndarray):
                 x = jax.random.permutation(subkey, x)
-                x = jnp.reshape(x, (args.num_minibatches, -1) + x.shape[1:])
+                x = jnp.reshape(x, (args.ppo.num_minibatches, -1) + x.shape[1:])
                 return x
 
             flatten_storage = jax.tree_map(flatten, storage)
@@ -881,7 +819,7 @@ def run_rollout_loop(
 
         (agent_state, key), (loss, pg_loss, v_loss, entropy_loss, approx_kl, grads) = (
             jax.lax.scan(
-                update_epoch, (agent_state, key), (), length=args.update_epochs
+                update_epoch, (agent_state, key), (), length=args.ppo.update_epochs
             )
         )
         return agent_state, loss, pg_loss, v_loss, entropy_loss, approx_kl, key
@@ -902,13 +840,13 @@ def run_rollout_loop(
             )
         next_obs = (grid, context)
 
-    next_done = jnp.full(num_envs, False)
+    next_done = jnp.full(args.env.num_envs, False)
     next_info = {
-        "TimeLimit.truncated": jnp.full(num_envs, False),
-        "terminated": jnp.full(num_envs, False),
-        "steps_elapsed": jnp.zeros(num_envs),
-        "reward_accumulated": jnp.zeros(num_envs),
-        "reward": jnp.zeros(num_envs),
+        "TimeLimit.truncated": jnp.full(args.env.num_envs, False),
+        "terminated": jnp.full(args.env.num_envs, False),
+        "steps_elapsed": jnp.zeros(args.env.num_envs),
+        "reward_accumulated": jnp.zeros(args.env.num_envs),
+        "reward": jnp.zeros(args.env.num_envs),
     }
 
     @jax.jit
@@ -935,7 +873,7 @@ def run_rollout_loop(
                 global_step,
             ) = carry
 
-            global_step += num_envs
+            global_step += args.env.num_envs
             storage, action, key = get_action_and_value(
                 agent_state, next_obs, next_done, storage, step, key
             )
@@ -966,10 +904,10 @@ def run_rollout_loop(
             key,
             global_step,
         )
-        return jax.lax.fori_loop(0, args.num_steps, body_fun, init_carry)
+        return jax.lax.fori_loop(0, args.exp.num_ppo_steps, body_fun, init_carry)
 
     progress_bar = tqdm(
-        range(1, num_iterations + 1),
+        range(1, args.exp.total_timesteps // args.env.num_envs + 1),
         desc="Training",
         postfix={
             "SPS": "0",
@@ -1018,13 +956,15 @@ def run_rollout_loop(
                 key,
                 global_step,
             )
-            if use_gif:
-                checkpoint_spacing = max(1, num_iterations // recording_times)
+            if args.viz.gif:
+                checkpoint_spacing = max(
+                    1, args.exp.total_timesteps // args.viz.recording_times
+                )
                 frame_iteration = iteration - 1  # Offset iteration by 1
 
                 if (
                     frame_iteration % checkpoint_spacing == 0
-                    and len(storage_returns) < recording_times
+                    and len(storage_returns) < args.viz.recording_times
                 ):
                     # print("Iteration video start", iteration)
                     storage_returns.append([])
@@ -1032,8 +972,9 @@ def run_rollout_loop(
                 # If we're within 7 steps after a checkpoint, keep adding steps
                 elif (
                     len(storage_returns) > 0
-                    and len(storage_returns[-1]) < frames_per_recording
-                    and frame_iteration % checkpoint_spacing < frames_per_recording
+                    and len(storage_returns[-1]) < args.viz.frames_per_recording
+                    and frame_iteration % checkpoint_spacing
+                    < args.viz.frames_per_recording
                 ):
                     # print("Iteration video continue", iteration)
                     storage_returns[-1].append(build_storage_return(storage, env))
@@ -1102,7 +1043,11 @@ def run_rollout_loop(
             writer.add_scalar("charts/SPS", sps, global_step)
             writer.add_scalar(
                 "charts/SPS_update",
-                int(num_envs * args.num_steps / (time.time() - iteration_time_start)),
+                int(
+                    args.env.num_envs
+                    * args.exp.num_ppo_steps
+                    / (time.time() - iteration_time_start)
+                ),
                 global_step,
             )
             # Calculate recent statistics

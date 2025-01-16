@@ -37,6 +37,13 @@ from functools import partial
 from collections import defaultdict
 import matplotlib
 import numpy as np
+from gym_cellular_automata.agents.args import (
+    Args,
+    PPOArgs,
+    EnvArgs,
+    VisualizationArgs,
+    ExperimentArgs,
+)
 
 DEFAULT_UPDATES = 40
 DEFAULT_MILISECOND_FRAME = 80
@@ -103,10 +110,12 @@ def get_run(env: Env, actor):
     warnings.filterwarnings("ignore", category=MatplotlibDeprecationWarning)
 
     # @gif.frame
-    def run(obs, info, episode_stats):
+    def run(obs, info, episode_stats, past_obs):
         # if save_gif:
         #     env.render()
         action = actor(obs[0], obs[1]["position"])
+        print("Action", action)
+
         step_tuple = env.stateless_step(action, obs, info)
         (
             next_obs,
@@ -281,50 +290,55 @@ def save_frames_and_plots(
 def generate_frames(
     env: Env,
     name: Union[str, Path],
-    each: int = 1,
-    updates: int = 50,
-    duration_between: int = 50,
-    save_gif: bool = True,
-    num_envs: int = 8,
-    profile: bool = False,
-    no_train: bool = False,
-    no_hidden: bool = False,
+    args: Args,
     actor=None,
     key=jax.random.key(0),
-    device=0,
-    learning_rate=2.5e-4,
-    track=False,
 ):
+    """Generate frames for visualization and/or training
+
+    Args:
+        env: The environment to run
+        name: Name for saving outputs
+        args: Structured arguments container
+        actor: Optional pre-trained actor (if None, will use random actions)
+        key: JAX random key
+    """
     import time
 
     start_time = time.time()
+
     run = get_run(env, actor)
-    frames_per_game = [[] for _ in range(num_envs)]
+    frames_per_game = [[] for _ in range(args.env.num_envs)]
     next_obs, report = env.reset()
     next_info = {
-        "TimeLimit.truncated": jnp.full(num_envs, False),
-        "terminated": jnp.full(num_envs, False),
-        "steps_elapsed": jnp.zeros(num_envs),
-        "reward_accumulated": jnp.zeros(num_envs),
-        "reward": jnp.zeros(num_envs),
+        "TimeLimit.truncated": jnp.full(args.env.num_envs, False),
+        "terminated": jnp.full(args.env.num_envs, False),
+        "steps_elapsed": jnp.zeros(args.env.num_envs),
+        "reward_accumulated": jnp.zeros(args.env.num_envs),
+        "reward": jnp.zeros(args.env.num_envs),
     }
 
     def run_env(next_local_obs, next_info):
+        past_action_logits = jnp.zeros(args.env.num_envs, dtype=jnp.float32)
+        past_obs = next_local_obs
+        current_obs = next_local_obs
         episode_stats = EpisodeStatistics(
-            episode_returns=jnp.zeros(num_envs, dtype=jnp.float32),
-            episode_lengths=jnp.zeros(num_envs, dtype=jnp.int32),
-            returned_episode_returns=jnp.zeros(num_envs, dtype=jnp.float32),
-            returned_episode_lengths=jnp.zeros(num_envs, dtype=jnp.int32),
+            episode_returns=jnp.zeros(args.env.num_envs, dtype=jnp.float32),
+            episode_lengths=jnp.zeros(args.env.num_envs, dtype=jnp.int32),
+            returned_episode_returns=jnp.zeros(args.env.num_envs, dtype=jnp.float32),
+            returned_episode_lengths=jnp.zeros(args.env.num_envs, dtype=jnp.int32),
         )
-        progress_bar = tqdm(range(updates), desc="Generating frames")
+        progress_bar = tqdm(range(args.viz.steps), desc="Generating frames")
         for frame_index in progress_bar:
             (
-                next_local_obs,
-                reward,
-                next_done,
-                truncated,
-                next_info,
-            ), episode_stats = run(next_local_obs, next_info, episode_stats)
+                (next_local_obs, reward, next_done, next_info),
+                episode_stats,
+            ) = run(next_local_obs, next_info, episode_stats, past_obs)
+
+            swap_obs = current_obs
+            current_obs = next_local_obs
+            past_obs = swap_obs
+
             avg_episode_length = np.mean(
                 jax.device_get(episode_stats.returned_episode_lengths)
             )
@@ -338,6 +352,7 @@ def generate_frames(
                 },
                 refresh=True,
             )
+
             for game_index in range(next_local_obs[0].shape[0]):
                 frames_per_game[game_index].append(
                     {
@@ -357,13 +372,13 @@ def generate_frames(
                         "cell_count": env.count_cells(next_local_obs[0][game_index]),
                     }
                 )
+
             avg_episodic_return = np.mean(
                 jax.device_get(episode_stats.returned_episode_returns)
             )
             current_episodic_return = np.mean(
                 jax.device_get(episode_stats.episode_returns)
             )
-
             progress_bar.set_postfix(
                 {
                     "avg_return": f"{avg_episodic_return:.2f}",
@@ -373,8 +388,8 @@ def generate_frames(
             )
         return next_local_obs, next_info
 
-    if no_train:
-        if profile:
+    if args.exp.no_train:
+        if args.exp.profile:
             with trace(
                 "./profile",
                 create_perfetto_link=True,
@@ -387,33 +402,27 @@ def generate_frames(
         save_frames_and_plots(
             env,
             name,
-            num_envs,
+            args.env.num_envs,
             frames_per_game,
-            duration_between,
-            no_hidden,
+            args.viz.duration,
+            not args.env.use_hidden,
             parallel=True,
         )
-
     else:
         if len(jax.devices()) >= 4:
-            device = jax.devices("tpu")[device]
+            device = jax.devices("tpu")[args.exp.device]
         else:
             device = jax.devices("cpu")[0]
+
         with jax.default_device(device):
             storage_returns, agent_state, run_name = run_rollout_loop(
                 env,
-                updates,
-                num_envs=num_envs,
-                recording_times=8,
-                use_gif=save_gif,
+                args=args,
                 key=key,
-                learning_rate=learning_rate,
-                device_index=device,
-                track=track,
             )
-        # grid_obs shape is (time, env, height, width)
+
         frames_per_game = []
-        if save_gif:
+        if args.viz.gif:
             for video_index, video_frames in enumerate(storage_returns):
                 frames_per_game.append([])
                 for frame_group in video_frames:
@@ -435,15 +444,17 @@ def generate_frames(
                                 "cell_count": env.count_cells(grid_obs[0, frame_index]),
                             }
                         )
+
             save_frames_and_plots(
                 env,
                 name,
                 len(frames_per_game),
                 frames_per_game,
-                duration_between,
-                no_hidden,
+                args.viz.duration,
+                not args.env.use_hidden,
                 parallel=not bool(len(jax.devices()) >= 4),
             )
+
         with open(f"runs/{run_name}_params.pkl", "wb") as f:
             pickle.dump(agent_state.params, f)
 
@@ -451,130 +462,137 @@ def generate_frames(
     print(f"Generation completed in {end_time - start_time:.2f} seconds")
 
 
-def generate_gif_envs(args):
+def generate_gif_envs(args: Args):
     prototypes = ["helicopter", "bulldozer", "advanced_bulldozer"]
-
     proto_id = 2
     name = prototypes[proto_id]
     ProtoEnv = gymca.prototypes[proto_id]
 
-    speed_move = (
-        int(args.speed_move) if isinstance(args.speed_move, str) else args.speed_move
-    )
-    speed_multiplier = (
-        int(args.speed_multiplier)
-        if isinstance(args.speed_multiplier, str)
-        else args.speed_multiplier
-    )
-    key = jax.random.key(int(args.key))
+    key = jax.random.key(args.exp.seed)
     key, subkey = jax.random.split(key)
 
     env = ProtoEnv(
-        nrows=args.size,
-        ncols=args.size,
+        nrows=args.env.size,
+        ncols=args.env.size,
         key=key,
-        num_envs=args.num_envs,
-        speed_move=speed_move * speed_multiplier,
-        speed_act=0.03 * speed_multiplier,
-        use_hidden=not args.no_hidden,
+        num_envs=args.env.num_envs,
+        speed_move=args.env.speed_move * args.env.speed_multiplier,
+        speed_act=0.03 * args.env.speed_multiplier,
+        use_hidden=args.env.use_hidden,
         middle_fire=False,
-        enable_extensions=args.enable_extensions,
+        enable_extensions=args.env.enable_extensions,
     )
 
-    if args.params:
-        actor = load_actor(args.params, env)
+    if args.exp.params_path:
+        actor = load_actor(args.exp.params_path, env)
     else:
         actor = lambda x, y: env.total_action_space.sample()
 
     generate_frames(
         env,
         name,
-        updates=args.steps,
-        duration_between=args.duration,
-        save_gif=args.gif,
-        num_envs=args.num_envs,
-        profile=args.profile,
-        no_train=args.no_train,
-        no_hidden=args.no_hidden,
+        args=args,
         actor=actor,
         key=subkey,
-        device=int(args.device),
-        learning_rate=float(args.learning_rate),
-        track=args.track,
     )
 
 
-# CLI args
-parser = argparse.ArgumentParser()
-parser.description = (
-    "Generate gif files sample for each of the gym_cellular_automata library"
-)
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Train PPO agent on cellular automata environments"
+    )
+
+    # Environment args
+    env = parser.add_argument_group("Environment")
+    env.add_argument("--env-id", type=str, default="advanced_bulldozer")
+    env.add_argument("--num-envs", "-n", type=int, default=8)
+    env.add_argument("--size", "-z", type=int, default=256)
+    env.add_argument("--speed-move", "-m", type=float, default=0.12)
+    env.add_argument("--speed-multiplier", type=float, default=1)
+    env.add_argument("--no-hidden", action="store_true")
+    env.add_argument("--enable-extensions", action="store_true")
+
+    # PPO args
+    ppo = parser.add_argument_group("PPO")
+    ppo.add_argument("--learning-rate", type=float, default=2.5e-4)
+    ppo.add_argument("--anneal-lr", action="store_true")
+    ppo.add_argument("--gamma", type=float, default=0.99)
+    ppo.add_argument("--gae-lambda", type=float, default=0.95)
+    # ... add other PPO args
+
+    # Visualization args
+    viz = parser.add_argument_group("Visualization")
+    viz.add_argument("--gif", action="store_true")
+    viz.add_argument("--duration", "-d", type=float, default=DEFAULT_MILISECOND_FRAME)
+    viz.add_argument("--recording-times", type=int, default=8)
+    viz.add_argument("--frames-per-recording", type=int, default=8)
+
+    # Experiment args
+    exp = parser.add_argument_group("Experiment")
+    exp.add_argument("--exp-name", type=str, default="ppo")
+    exp.add_argument("--seed", type=int, default=1)
+    exp.add_argument("--track", action="store_true")
+    exp.add_argument("--wandb-project", type=str, default="extended-mind")
+    exp.add_argument("--wandb-entity", type=str, default="glen-berseth")
+    exp.add_argument("--device", type=int, default=0)
+    exp.add_argument("--profile", "-p", action="store_true")
+    viz.add_argument("--steps", "-s", type=int, default=DEFAULT_UPDATES)
+    exp.add_argument("--num-ppo-steps", type=int, default=128)
+    exp.add_argument("--no-train", "-t", action="store_true")
+    exp.add_argument("--params", type=str)
+
+    args = parser.parse_args()
+    return args
 
 
-parser.add_argument(
-    "--steps",
-    "-s",
-    type=int,
-    default=DEFAULT_UPDATES,
-    help=f"Steps to play on the environment. {DEFAULT_UPDATES}",
-)
+def args_to_structured_args(args) -> Args:
+    """Convert flat argparse args to nested Args dataclass"""
+    ppo_args = PPOArgs(
+        learning_rate=args.learning_rate,
+        anneal_lr=args.anneal_lr,
+        gamma=args.gamma,
+        gae_lambda=args.gae_lambda,
+        # ... other PPO args
+    )
 
-parser.add_argument(
-    "--duration",
-    "-d",
-    type=float,
-    default=DEFAULT_MILISECOND_FRAME,
-    help=f"Time elapsed in miliseconds between each frame of the animation. "
-    f"{DEFAULT_MILISECOND_FRAME}",
-)
+    env_args = EnvArgs(
+        env_id=args.env_id,
+        num_envs=args.num_envs,
+        size=args.size,
+        speed_move=args.speed_move,
+        speed_multiplier=args.speed_multiplier,
+        use_hidden=not args.no_hidden,
+        enable_extensions=args.enable_extensions,
+    )
 
-parser.add_argument(
-    "--gif",
-    action="store_true",
-    help="Run without generating gif files",
-)
+    viz_args = VisualizationArgs(
+        gif=args.gif,
+        steps=args.steps,
+        duration=args.duration,
+        recording_times=args.recording_times,
+        frames_per_recording=args.frames_per_recording,
+    )
 
-parser.add_argument(
-    "--num-envs",
-    "-n",
-    type=int,
-    default=8,
-)
+    exp_args = ExperimentArgs(
+        exp_name=args.exp_name,
+        seed=args.seed,
+        track=args.track,
+        wandb_project_name=args.wandb_project,
+        wandb_entity=args.wandb_entity,
+        device=args.device,
+        profile=args.profile,
+        total_timesteps=args.steps,
+        num_ppo_steps=args.num_ppo_steps,
+        no_train=args.no_train,
+        params_path=args.params,
+    )
 
-parser.add_argument(
-    "--profile",
-    "-p",
-    action="store_true",
-    help="Run with profiling",
-)
+    return Args(ppo=ppo_args, env=env_args, viz=viz_args, exp=exp_args)
 
-parser.add_argument(
-    "--no-train",
-    "-t",
-    action="store_true",
-    help="Run without training",
-)
-
-parser.add_argument("--speed-move", "-m", default=0.12)
-
-parser.add_argument("--speed-multiplier", default=1)
-parser.add_argument(
-    "--size",
-    "-z",
-    type=int,
-    default=256,
-)
-parser.add_argument("--device", default="0")
-
-parser.add_argument("--no-hidden", action="store_true")
-parser.add_argument("--params")
-parser.add_argument("--key", default="0")
-parser.add_argument("--learning-rate", default=2.5e-4)
-parser.add_argument("--enable-extensions", action="store_true")
-parser.add_argument("--track", action="store_true")
 
 if __name__ == "__main__":
-    args = parser.parse_args()
+    args = parse_args()
+    structured_args = args_to_structured_args(args)
 
     gif.options.matplotlib["dpi"] = 200
-    generate_gif_envs(args)
+    generate_gif_envs(structured_args)
