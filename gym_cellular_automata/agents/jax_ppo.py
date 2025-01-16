@@ -2,7 +2,6 @@
 import os
 import random
 import time
-from dataclasses import dataclass
 from typing import Sequence
 
 import flax
@@ -12,7 +11,6 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 from tqdm import tqdm
-import pickle
 import orbax.checkpoint
 
 from jax.sharding import PartitionSpec as P, NamedSharding
