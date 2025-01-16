@@ -662,7 +662,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         self._p_wind_change = 0.06
 
         self._effects = {
-            self._fire: self._bulldozed,
+            # self._fire: self._bulldozed,
             self._tree: self._bulldozed,
         }  # Substitution Effect
 
@@ -953,55 +953,55 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             vegitations.append(plot_grid_attribute(self._vegitation[v], "Vegitation"))
         return vegitations
 
-    # def _award(self, prev_grid, grid, per_env_context):
-    #     """Reward Function
-
-    #     Combines negative ratio of burning area with time pressure:
-    #     raw_reward = -(f / (t + f)) - (time_step / max_steps)
-    #     final_reward = tanh(raw_reward)
-
-    #     Where:
-    #         t: tree cell counts
-    #         f: fire cell counts
-    #         time_step: current timestep
-    #         max_steps: normalization factor (e.g. 200)
-
-    #     Both components naturally fall in [-1,0], so their sum is in [-2,0].
-    #     Tanh maps this smoothly to [-1,1] with good gradients in the typical range.
-    #     """
-    #     counts = self.count_cells(grid)
-
-    #     # Basic fire/tree ratio component
-    #     t = counts[self._tree]
-    #     f = counts[self._fire]
-    #     base_reward = jnp.where(t + f > 0, -(f / (t + f)), 0.0)
-
-    #     # Time pressure component (normalized to [0,1])
-    #     time_step = per_env_context["time_step"]
-    #     time_penalty = jnp.minimum(
-    #         time_step / 100.0, 4.0
-    #     )  # Caps at -1.0 after 200 steps
-
-    #     # Combine and map to [-1,1]
-    #     raw_reward = 1 + base_reward - time_penalty
-    #     return jnp.tanh(raw_reward)
-
     def _award(self, prev_grid, grid, per_env_context):
-        ncells = grid.shape[0] * grid.shape[1]
+        #     """Reward Function
 
-        dict_counts = self.count_cells(grid)
+        #     Combines negative ratio of burning area with time pressure:
+        #     raw_reward = -(f / (t + f)) - (time_step / max_steps)
+        #     final_reward = tanh(raw_reward)
 
-        cell_counts = jnp.array(
-            [dict_counts[self._empty], dict_counts[self._tree], dict_counts[self._fire]]
-        )
+        #     Where:
+        #         t: tree cell counts
+        #         f: fire cell counts
+        #         time_step: current timestep
+        #         max_steps: normalization factor (e.g. 200)
 
-        cell_counts_relative = cell_counts / ncells
+        #     Both components naturally fall in [-1,0], so their sum is in [-2,0].
+        #     Tanh maps this smoothly to [-1,1] with good gradients in the typical range.
+        #     """
+        counts = self.count_cells(grid)
 
-        reward_weights = jnp.array(
-            [self._reward_per_empty, self._reward_per_tree, self._reward_per_fire]
-        )
+        # Basic fire/tree ratio component
+        t = counts[self._tree]
+        f = counts[self._fire]
+        base_reward = jnp.where(t + f > 0, -(f / (t + f)), 0.0)
 
-        return jnp.dot(reward_weights, cell_counts_relative)
+        # Time pressure component (normalized to [0,1])
+        time_step = per_env_context["time_step"]
+        time_penalty = jnp.minimum(
+            time_step / 100.0, 4.0
+        )  # Caps at -1.0 after 200 steps
+
+        # Combine and map to [-1,1]
+        raw_reward = 1 + base_reward - time_penalty
+        return jnp.tanh(raw_reward)
+
+    # def _award(self, prev_grid, grid, per_env_context):
+    #     ncells = grid.shape[0] * grid.shape[1]
+
+    #     dict_counts = self.count_cells(grid)
+
+    #     cell_counts = jnp.array(
+    #         [dict_counts[self._empty], dict_counts[self._tree], dict_counts[self._fire]]
+    #     )
+
+    #     cell_counts_relative = cell_counts / ncells
+
+    #     reward_weights = jnp.array(
+    #         [self._reward_per_empty, self._reward_per_tree, self._reward_per_fire]
+    #     )
+
+    #     return jnp.dot(reward_weights, cell_counts_relative)
 
     def _is_done(self, grid):
         return jnp.invert(jnp.any(grid == self._fire))
