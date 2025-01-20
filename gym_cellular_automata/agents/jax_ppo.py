@@ -234,9 +234,10 @@ def run_rollout_loop(
         args: Structured arguments container
         key: JAX random key
     """
-    run_name = (
-        f"{args.env.env_id}__{args.exp.exp_name}__{args.exp.seed}__{int(time.time())}"
-    )
+    host = os.environ.get("EXTENDED_MIND_HOST", "")
+    if not host:
+        host = "local"
+    run_name = f"{args.env.env_id}__seed={args.exp.seed}__speed={args.env.speed_multiplier}__size={args.env.size}__host={host}__{int(time.time())}"
     checkpoint_options = orbax.checkpoint.CheckpointManagerOptions(
         max_to_keep=2, create=True
     )
