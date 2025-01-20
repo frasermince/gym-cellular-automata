@@ -20,6 +20,7 @@ from torch.utils.tensorboard import SummaryWriter
 from jax.experimental import host_callback
 import math
 from gym_cellular_automata.agents.args import Args
+from functools import partial
 
 
 def policy_printer(args):
@@ -649,6 +650,19 @@ def run_rollout_loop(
         value = critic.apply(params["critic_params"], hidden).squeeze()
         return logprobs, entropies, value
 
+    def compute_gae_once(carry, inp, gamma, gae_lambda):
+        advantages = carry
+        nextdone, nextvalues, curvalues, reward = inp
+        nextnonterminal = 1.0 - nextdone
+
+        delta = reward + gamma * nextvalues * nextnonterminal - curvalues
+        advantages = delta + gamma * gae_lambda * nextnonterminal * advantages
+        return advantages, advantages
+
+    compute_gae_once = partial(
+        compute_gae_once, gamma=args.ppo.gamma, gae_lambda=args.ppo.gae_lambda
+    )
+
     @jax.jit
     def compute_gae(
         agent_state: TrainState,
@@ -656,52 +670,24 @@ def run_rollout_loop(
         next_done: np.ndarray,
         storage: Storage,
     ):
-        storage = storage.replace(advantages=storage.advantages.at[:].set(0.0))
-
-        grid, context = next_obs
-        network_output = network.apply(
-            agent_state.params["network_params"],
-            grid,
-        )
         next_value = critic.apply(
             agent_state.params["critic_params"],
-            network_output,
+            network.apply(agent_state.params["network_params"], next_obs[0]),
         ).squeeze(-1)
 
-        lastgaelam = jnp.zeros(next_done.shape)
-
-        def gae_step(carry, t):
-            lastgaelam, storage = carry
-            nextnonterminal = jax.lax.cond(
-                t == args.exp.num_ppo_steps - 1,
-                lambda _: 1.0 - next_done,
-                lambda _: 1.0 - storage.dones[t + 1],
-                None,
-            )
-            nextvalues = jax.lax.cond(
-                t == args.exp.num_ppo_steps - 1,
-                lambda _: next_value,
-                lambda _: storage.values[t + 1],
-                None,
-            )
-            delta = (
-                storage.rewards[t]
-                + args.ppo.gamma * nextvalues * nextnonterminal
-                - storage.values[t]
-            )
-            lastgaelam = delta + args.ppo.gae_lambda * nextnonterminal * lastgaelam
-
-            storage = storage.replace(
-                advantages=storage.advantages.at[t].set(lastgaelam)
-            )
-            return (lastgaelam, storage), None
-
-        (lastgaelam, storage), _ = jax.lax.scan(
-            gae_step,
-            (lastgaelam, storage),
-            jnp.arange(args.exp.num_ppo_steps - 1, -1, -1),
+        advantages = jnp.zeros((args.env.num_envs,))
+        dones = jnp.concatenate([storage.dones, next_done[None, :]], axis=0)
+        values = jnp.concatenate([storage.values, next_value[None, :]], axis=0)
+        _, advantages = jax.lax.scan(
+            compute_gae_once,
+            advantages,
+            (dones[1:], values[1:], values[:-1], storage.rewards),
+            reverse=True,
         )
-        storage = storage.replace(returns=storage.advantages + storage.values)
+        storage = storage.replace(
+            advantages=advantages,
+            returns=advantages + storage.values,
+        )
         return storage
 
     @jax.jit
@@ -909,11 +895,9 @@ def run_rollout_loop(
         desc="Training",
         postfix={
             "SPS": "0",
-            # "avg_return": "0.0",
-            # "current_return": "0.0",
+            "avg_episodic_return": "0.0",
             "games_finished": 0,
             "avg_episode_length": "0.0",
-            # "avg_returned_episode_length": "0.0",
             "avg_return_per_timestep": "0.0",
             "recent_20_return": "0.0",
             "recent_20_length": "0.0",
@@ -1099,6 +1083,7 @@ def run_rollout_loop(
                     # "current_return": f"{current_episodic_return:.2f}",
                     "games_finished": int(jax.device_get(total_finished)),
                     # "avg_returned_episode_length": f"{avg_returned_episode_length:.2f}",
+                    "avg_episodic_return": f"{avg_episodic_return:.2f}",
                     "avg_return_per_timestep": f"{avg_return_per_timestep:.4f}",
                     "recent_10_return": f"{recent_avg_return:.2f}",
                     "recent_10_length": f"{recent_avg_length:.2f}",
