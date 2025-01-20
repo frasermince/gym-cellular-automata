@@ -237,7 +237,7 @@ def run_rollout_loop(
     host = os.environ.get("EXTENDED_MIND_HOST", "")
     if not host:
         host = "local"
-    run_name = f"{args.env.env_id}__seed={args.exp.seed}__speed={args.env.speed_multiplier}__size={args.env.size}__host={host}__{int(time.time())}"
+    run_name = f"{args.env.env_id}__seed={args.exp.seed}__speed={args.env.speed_multiplier}__size={args.env.size}__lr={args.ppo.learning_rate}__host={host}__{int(time.time())}"
     checkpoint_options = orbax.checkpoint.CheckpointManagerOptions(
         max_to_keep=2, create=True
     )
