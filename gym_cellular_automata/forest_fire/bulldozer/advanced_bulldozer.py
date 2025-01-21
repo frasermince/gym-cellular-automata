@@ -115,8 +115,8 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             "zoom",
         ]
         self._reward_per_tree = 0.0
-        self._reward_per_empty = -0.5
-        self._reward_per_fire = -0.5
+        self._reward_per_empty = -1
+        self._reward_per_fire = -1
         self._reward_per_bulldozed = 0.0
 
         self.num_envs = num_envs
