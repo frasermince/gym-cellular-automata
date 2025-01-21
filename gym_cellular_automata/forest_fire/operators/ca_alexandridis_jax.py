@@ -295,6 +295,7 @@ class PartiallyObservableForestFireJax(Operator):
         new_fire_age = jnp.where(fire_mask, new_fire_age - 1, new_fire_age)
         return new_grid, new_fire_age
 
+    @partial(jit, static_argnums=(0,))
     def update(self, grid, action, per_env_context, shared_context):
         wind_matrix, ft = shared_context["winds"][per_env_context["wind_index"]]
 
