@@ -1167,11 +1167,13 @@ def run_rollout_loop(
             if jnp.any(mask):
                 # Calculate percentage of correct actions
                 day_correct_rate = jnp.where(
-                    recent_day_steps > 0, recent_day_correct / recent_day_steps, 0.0
+                    recent_day_steps > 0,
+                    recent_day_correct / (recent_day_steps + 1e-8),
+                    0.0,
                 )[mask].mean()
                 night_correct_rate = jnp.where(
                     recent_night_steps > 0,
-                    recent_night_correct / recent_night_steps,
+                    recent_night_correct / (recent_night_steps + 1e-8),
                     0.0,
                 )[mask].mean()
 
