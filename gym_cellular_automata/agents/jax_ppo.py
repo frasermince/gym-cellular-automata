@@ -199,9 +199,19 @@ class EpisodeStatistics:
     returned_episode_returns: jnp.array
     returned_episode_lengths: jnp.array
     amount_finished: jnp.array = 0
-    recent_returns: jnp.array = None  # Will be initialized later
-    recent_lengths: jnp.array = None  # Will be initialized later
+    recent_returns: jnp.array = None
+    recent_lengths: jnp.array = None
     recent_idx: jnp.array = 0
+    # Current episode tracking
+    current_day_correct: jnp.array = None  # Track current episodes
+    current_night_correct: jnp.array = None
+    current_day_steps: jnp.array = None
+    current_night_steps: jnp.array = None
+    # Recent episode stats
+    recent_day_correct: jnp.array = None  # Store completed episodes
+    recent_night_correct: jnp.array = None
+    recent_day_steps: jnp.array = None
+    recent_night_steps: jnp.array = None
 
 
 def build_storage_return(storage, env):
@@ -292,6 +302,16 @@ def run_rollout_loop(
         recent_returns=jnp.zeros(10, dtype=jnp.float32),
         recent_lengths=jnp.zeros(10, dtype=jnp.int32),
         recent_idx=jnp.array(0, dtype=jnp.int32),
+        # Current episode tracking
+        current_day_correct=jnp.zeros(args.env.num_envs, dtype=jnp.int32),
+        current_night_correct=jnp.zeros(args.env.num_envs, dtype=jnp.int32),
+        current_day_steps=jnp.zeros(args.env.num_envs, dtype=jnp.int32),
+        current_night_steps=jnp.zeros(args.env.num_envs, dtype=jnp.int32),
+        # Recent episode stats
+        recent_day_correct=jnp.zeros(10, dtype=jnp.int32),
+        recent_night_correct=jnp.zeros(10, dtype=jnp.int32),
+        recent_day_steps=jnp.zeros(10, dtype=jnp.int32),
+        recent_night_steps=jnp.zeros(10, dtype=jnp.int32),
     )
     # handle, recv, send, step_env = envs.xla()
 
@@ -309,7 +329,23 @@ def run_rollout_loop(
         new_episode_return = current_episode_stats.episode_returns + next_info["reward"]
         new_episode_length = current_episode_stats.episode_lengths + 1
 
-        # Update recent stats when episodes finish
+        # Track correct extension usage (last action in tuple)
+        is_night = obs[1]["per_env_context"]["is_night"]
+        extension_action = action[:, -1]  # Get last action from tuple
+
+        # Count correct actions (2 for day, 1 for night)
+        day_correct = (1 - is_night) * (extension_action == 2)
+        night_correct = is_night * (extension_action == 1)
+
+        # Update current episode stats
+        current_episode_stats = current_episode_stats.replace(
+            current_day_correct=current_episode_stats.current_day_correct + day_correct,
+            current_night_correct=current_episode_stats.current_night_correct
+            + night_correct,
+            current_day_steps=current_episode_stats.current_day_steps + (1 - is_night),
+            current_night_steps=current_episode_stats.current_night_steps + is_night,
+        )
+
         def update_recent_stats(stats, returns, lengths, mask):
             # Instead of using boolean indexing, we'll use a scan
             num_finished = jnp.sum(mask)
@@ -328,6 +364,35 @@ def run_rollout_loop(
                     stats.recent_lengths.at[new_idx].set(lengths[env_idx]),
                     stats.recent_lengths,
                 )
+                # Update recent day/night stats when episode finishes
+                new_day_correct = jnp.where(
+                    mask[env_idx],
+                    stats.recent_day_correct.at[new_idx].set(
+                        stats.current_day_correct[env_idx]
+                    ),
+                    stats.recent_day_correct,
+                )
+                new_night_correct = jnp.where(
+                    mask[env_idx],
+                    stats.recent_night_correct.at[new_idx].set(
+                        stats.current_night_correct[env_idx]
+                    ),
+                    stats.recent_night_correct,
+                )
+                new_day_steps = jnp.where(
+                    mask[env_idx],
+                    stats.recent_day_steps.at[new_idx].set(
+                        stats.current_day_steps[env_idx]
+                    ),
+                    stats.recent_day_steps,
+                )
+                new_night_steps = jnp.where(
+                    mask[env_idx],
+                    stats.recent_night_steps.at[new_idx].set(
+                        stats.current_night_steps[env_idx]
+                    ),
+                    stats.recent_night_steps,
+                )
                 new_idx = (new_idx + mask[env_idx].astype(jnp.int32)) % 10
 
                 return (
@@ -335,6 +400,10 @@ def run_rollout_loop(
                         stats.replace(
                             recent_returns=new_returns,
                             recent_lengths=new_lengths,
+                            recent_day_correct=new_day_correct,
+                            recent_night_correct=new_night_correct,
+                            recent_day_steps=new_day_steps,
+                            recent_night_steps=new_night_steps,
                             recent_idx=new_idx,
                         ),
                         returns,
@@ -349,8 +418,14 @@ def run_rollout_loop(
                 body_fun, (stats, returns, lengths, mask), jnp.arange(mask.shape[0])
             )
 
+            # Reset current episode stats for finished episodes
             return final_stats.replace(
-                recent_idx=(stats.recent_idx + num_finished) % 10
+                recent_idx=(stats.recent_idx + num_finished) % 10,
+                # Reset current stats for finished episodes
+                # current_day_correct=final_stats.current_day_correct * (1 - mask),
+                # current_night_correct=final_stats.current_night_correct * (1 - mask),
+                # current_day_steps=final_stats.current_day_steps * (1 - mask),
+                # current_night_steps=final_stats.current_night_steps * (1 - mask),
             )
 
         finished_mask = next_info["terminated"] + next_info["TimeLimit.truncated"]
@@ -1081,6 +1156,36 @@ def run_rollout_loop(
                 recent_standard_error,
                 global_step,
             )
+
+            # Calculate extension correctness statistics
+            recent_day_correct = jax.device_get(sharded_stats.recent_day_correct)
+            recent_night_correct = jax.device_get(sharded_stats.recent_night_correct)
+            recent_day_steps = jax.device_get(sharded_stats.recent_day_steps)
+            recent_night_steps = jax.device_get(sharded_stats.recent_night_steps)
+
+            mask = (recent_returns != 0) & (recent_lengths != 0)
+            if jnp.any(mask):
+                # Calculate percentage of correct actions
+                day_correct_rate = jnp.where(
+                    recent_day_steps > 0, recent_day_correct / recent_day_steps, 0.0
+                )[mask].mean()
+                night_correct_rate = jnp.where(
+                    recent_night_steps > 0,
+                    recent_night_correct / recent_night_steps,
+                    0.0,
+                )[mask].mean()
+
+                writer.add_scalar(
+                    "extensions/night_correct_rate",
+                    night_correct_rate.item() * 100,
+                    global_step,
+                )
+                writer.add_scalar(
+                    "extensions/day_correct_rate",
+                    day_correct_rate.item() * 100,
+                    global_step,
+                )
+
             # Update progress bar
             progress_bar.set_postfix(
                 {
