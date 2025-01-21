@@ -446,15 +446,16 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             )
 
             for key in self.per_env_context_keys:
-                key_shape = context["per_env_context"][key].shape
-                expanded_terminated = terminated[
-                    (...,) + (None,) * (len(key_shape) - 1)
-                ]
-                context["per_env_context"][key] = jnp.where(
-                    expanded_terminated,
-                    initial_context["per_env_context"][key],
-                    context["per_env_context"][key],
-                )
+                if not (key == "current_day_length" or key == "is_night"):
+                    key_shape = context["per_env_context"][key].shape
+                    expanded_terminated = terminated[
+                        (...,) + (None,) * (len(key_shape) - 1)
+                    ]
+                    context["per_env_context"][key] = jnp.where(
+                        expanded_terminated,
+                        initial_context["per_env_context"][key],
+                        context["per_env_context"][key],
+                    )
 
             obs = (next_grid, context)
             info["steps_elapsed"] = jnp.where(terminated, 0, info["steps_elapsed"])
