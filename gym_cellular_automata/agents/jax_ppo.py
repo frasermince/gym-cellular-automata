@@ -62,8 +62,8 @@ class Network(nn.Module):
             # For small grids, use smaller strides
             x = nn.Conv(
                 32,
-                kernel_size=(3, 3),
-                strides=(1, 1),  # Reduced stride
+                kernel_size=(4, 4),
+                strides=(2, 2),  # Reduced stride
                 padding="VALID",
                 kernel_init=orthogonal(np.sqrt(2)),
                 bias_init=constant(0.0),
@@ -71,7 +71,7 @@ class Network(nn.Module):
             x = nn.relu(x)
             x = nn.Conv(
                 64,
-                kernel_size=(3, 3),
+                kernel_size=(2, 2),
                 strides=(1, 1),  # Reduced stride
                 padding="VALID",
                 kernel_init=orthogonal(np.sqrt(2)),
@@ -438,6 +438,11 @@ def run_rollout_loop(
             network_params,
             grid_sample,
         ),
+    )
+    print(
+        sum(x.size for x in jax.tree_leaves(network_params)),
+        sum(x.size for x in jax.tree_leaves(actor_params)),
+        sum(x.size for x in jax.tree_leaves(critic_params)),
     )
 
     agent_state = TrainState.create(
@@ -1144,6 +1149,11 @@ def load_actor(params_path: str, env):
     critic_params = critic.init(
         critic_key,
         network.apply(network_params, grid_sample),
+    )
+    print(
+        sum(x.size for x in jax.tree_leaves(network_params)),
+        sum(x.size for x in jax.tree_leaves(actor_params)),
+        sum(x.size for x in jax.tree_leaves(critic_params)),
     )
     agent_state = {
         "network_params": network_params,
