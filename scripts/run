@@ -69,7 +69,7 @@ jax.config.update("jax_platform_name", DEFAULT_PLATFORM)
 
 
 @gif.frame
-def process_single_frame(args, empty, tree, fire, title, pos_fires):
+def process_single_frame(args, empty, tree, fire, bulldozed, title, pos_fires):
     """Helper function that applies the decorator inside the process"""
 
     grid = args["grid"]
@@ -87,6 +87,7 @@ def process_single_frame(args, empty, tree, fire, title, pos_fires):
         empty,
         tree,
         fire,
+        bulldozed,
         title,
         grid,
         time_per_frame,
@@ -149,8 +150,13 @@ def get_run(env: Env, actor):
                 episode_stats.returned_episode_lengths,
             ),
         )
+
         new_episode_return = episode_stats.episode_returns + next_info["reward"]
         step_tuple = env.conditional_reset(step_tuple, action)
+
+        if next_done.any():
+            print(next_obs[1]["position"])
+            print(next_obs[1]["time"])
         return step_tuple, episode_stats
 
     return run
@@ -236,6 +242,7 @@ def save_frames_and_plots(
         empty=env._empty,
         tree=env._tree,
         fire=env._fire,
+        bulldozed=env._bulldozed,
         title=env.spec.id if env.spec is not None else env.title,
         pos_fires=env._pos_fire,
     )
@@ -331,7 +338,7 @@ def generate_frames(
         progress_bar = tqdm(range(args.viz.steps), desc="Generating frames")
         for frame_index in progress_bar:
             (
-                (next_local_obs, reward, next_done, next_info),
+                (next_local_obs, reward, next_done, truncated, next_info),
                 episode_stats,
             ) = run(next_local_obs, next_info, episode_stats, past_obs)
 
@@ -482,11 +489,42 @@ def generate_gif_envs(args: Args):
         middle_fire=False,
         enable_extensions=args.env.enable_extensions,
     )
+    actions = [
+        1,
+        1,
+        1,
+        6,
+        6,
+        6,
+        6,
+        6,
+        6,
+        7,
+        7,
+        7,
+        7,
+        7,
+        7,
+        7,
+        7,
+        7,
+        7,
+        7,
+        7,
+        7,
+    ]
+
+    def run_actions(x, y):
+        action = actions.pop(0)
+        actions.append(action)
+        return jnp.array([[action, 1, 0]])
 
     if args.exp.params_path:
         actor = load_actor(args.exp.params_path, env)
     else:
         actor = lambda x, y: env.total_action_space.sample()
+
+    # actor = run_actions
 
     generate_frames(
         env,
