@@ -40,12 +40,14 @@ TITLE_ALIGN = "left"
 COLOR_EMPTY_DAY = "#DDD1D3"  # Gray
 COLOR_TREE_DAY = "#A9C499"  # Green
 COLOR_FIRE_DAY = "#E68181"  # Salmon-Red
+COLOR_BULLDOZED_DAY = "#B8860B"  # Dark Goldenrod
 COLOR_GAUGE_DAY = "#D4CCDB"  # Gray-Purple
 
 # Night colors
 COLOR_EMPTY_NIGHT = "#696969"  # Darker Gray
 COLOR_TREE_NIGHT = "#2F4F4F"  # Dark Green
 COLOR_FIRE_NIGHT = "#8B0000"  # Dark Red
+COLOR_BULLDOZED_NIGHT = "#8B4513"  # Saddle Brown
 COLOR_GAUGE_NIGHT = "#483D8B"  # Dark Slate Blue
 
 # Local Grid
@@ -131,6 +133,7 @@ def render(
     empty,
     tree,
     fire,
+    bulldozed,
     title,
     grid,
     time,
@@ -143,25 +146,27 @@ def render(
     EMPTY = empty
     TREE = tree
     FIRE = fire
-
+    BULLDOZED = bulldozed
     # Select color scheme based on is_night
     if is_night:
         COLOR_EMPTY = COLOR_EMPTY_NIGHT
         COLOR_TREE = COLOR_TREE_NIGHT
         COLOR_FIRE = COLOR_FIRE_NIGHT
+        COLOR_BULLDOZED = COLOR_BULLDOZED_NIGHT
         COLOR_GAUGE = COLOR_GAUGE_NIGHT
     else:
         COLOR_EMPTY = COLOR_EMPTY_DAY
         COLOR_TREE = COLOR_TREE_DAY
         COLOR_FIRE = COLOR_FIRE_DAY
+        COLOR_BULLDOZED = COLOR_BULLDOZED_DAY
         COLOR_GAUGE = COLOR_GAUGE_DAY
 
     # Assumes that cells values are in ascending order and paired with its colors
-    COLORS = [COLOR_EMPTY, COLOR_TREE, COLOR_FIRE]
-    CELLS = [EMPTY, TREE, FIRE]
+    COLORS = [COLOR_EMPTY, COLOR_TREE, COLOR_BULLDOZED, COLOR_FIRE]
+    CELLS = [EMPTY, TREE, BULLDOZED, FIRE]
     NORM, CMAP = get_norm_cmap(CELLS, COLORS)
 
-    local_grid = moore_n(N_LOCAL, pos, grid, EMPTY)
+    # local_grid = moore_n(N_LOCAL, pos, grid, EMPTY)
     pos_fseed = pos_fire
 
     # Why two titles?
@@ -171,7 +176,7 @@ def render(
 
     def main():
         plt.style.use(FIGSTYLE)
-        fig_shape = (12, 14)
+        fig_shape = (12, 16)
         fig = plt.figure(figsize=FIGSIZE)
         fig.suptitle(
             TITLE,
@@ -182,12 +187,12 @@ def render(
             ha=TITLE_ALIGN,
         )
 
-        ax_lgrid = plt.subplot2grid(fig_shape, (0, 0), colspan=8, rowspan=10)
-        ax_ggrid = plt.subplot2grid(fig_shape, (0, 8), colspan=6, rowspan=6)
+        # ax_lgrid = plt.subplot2grid(fig_shape, (0, 0), colspan=8, rowspan=10)
+        ax_ggrid = plt.subplot2grid(fig_shape, (0, 0), colspan=10, rowspan=10)
         ax_gauge = plt.subplot2grid(fig_shape, (10, 0), colspan=8, rowspan=2)
-        ax_counts = plt.subplot2grid(fig_shape, (6, 8), colspan=6, rowspan=6)
+        ax_counts = plt.subplot2grid(fig_shape, (5, 10), colspan=6, rowspan=6)
 
-        plot_local(ax_lgrid, local_grid)
+        # plot_local(ax_lgrid, local_grid)
 
         plot_global(ax_ggrid, grid, pos, pos_fseed)
 

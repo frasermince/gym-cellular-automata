@@ -381,7 +381,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
 
         return obs, info
 
-    # @partial(jax.jit, static_argnums=(0,), static_argnames=("seed", "options"))
+    @partial(jax.jit, static_argnums=(0,), static_argnames=("seed", "options"))
     def conditional_reset(
         self,
         step_tuple,
@@ -390,12 +390,25 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         seed: Optional[int] = None,
         options: Optional[dict] = None,
     ):
+
+        @jax.jit
         def reset_fn(args):
             step_tuple, (initial_grid, initial_context) = args
             obs, reward, terminated, truncated, info = step_tuple
             grid, context = obs
             grid_obs_only = jnp.where(
                 terminated[:, None, None], initial_grid[:, :, :, 0], grid[:, :, :, 0]
+            )
+            context["position"] = jnp.where(
+                terminated[:, None],
+                initial_context["position"],
+                context["position"],
+            )
+
+            context["time"] = jnp.where(
+                terminated[:],
+                initial_context["time"],
+                context["time"],
             )
 
             shared_context = context["shared_context"]
@@ -442,6 +455,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
                     initial_context["per_env_context"][key],
                     context["per_env_context"][key],
                 )
+
             obs = (next_grid, context)
             info["steps_elapsed"] = jnp.where(terminated, 0, info["steps_elapsed"])
             info["reward_accumulated"] = jnp.where(
