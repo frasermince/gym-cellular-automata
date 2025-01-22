@@ -242,7 +242,7 @@ class PartiallyObservableForestFireJax(Operator):
 
         # Generate random fire ages (3-5) for new fires
         key, fire_age_key = random.split(key)
-        new_fire_ages = random.randint(fire_age_key, grid.shape, 20, 30)
+        new_fire_ages = random.randint(fire_age_key, grid.shape, 10, 15)
 
         # Sets to fire if the following:
         # - If the cell is a tree
