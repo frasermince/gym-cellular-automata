@@ -114,9 +114,9 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             "altitude",
             "zoom",
         ]
-        self._reward_per_tree = 0.0
-        self._reward_per_empty = -1
-        self._reward_per_fire = -1
+        self._reward_per_tree = 1
+        self._reward_per_empty = 0
+        self._reward_per_fire = 0
         self._reward_per_bulldozed = 0.0
 
         self.num_envs = num_envs
@@ -550,7 +550,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
                 self._reward_per_bulldozed,
             ]
         )
-        return jnp.dot(reward_weights, cell_counts_relative)
+        return jnp.dot(reward_weights, cell_counts_relative) - 1
 
     def _is_done(self, grid):
         return jnp.invert(jnp.any(grid == self._fire))
