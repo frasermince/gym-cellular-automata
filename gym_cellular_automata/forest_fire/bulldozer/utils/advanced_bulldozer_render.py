@@ -41,6 +41,7 @@ COLOR_EMPTY_DAY = "#DDD1D3"  # Gray
 COLOR_TREE_DAY = "#A9C499"  # Green
 COLOR_FIRE_DAY = "#E68181"  # Salmon-Red
 COLOR_BULLDOZED_DAY = "#B8860B"  # Dark Goldenrod
+COLOR_BURNED_DAY = "#8B0000"  # Dark Red
 COLOR_GAUGE_DAY = "#D4CCDB"  # Gray-Purple
 
 # Night colors
@@ -48,6 +49,7 @@ COLOR_EMPTY_NIGHT = "#696969"  # Darker Gray
 COLOR_TREE_NIGHT = "#2F4F4F"  # Dark Green
 COLOR_FIRE_NIGHT = "#8B0000"  # Dark Red
 COLOR_BULLDOZED_NIGHT = "#8B4513"  # Saddle Brown
+COLOR_BURNED_NIGHT = "#8B0000"  # Dark Red
 COLOR_GAUGE_NIGHT = "#483D8B"  # Dark Slate Blue
 
 # Local Grid
@@ -134,6 +136,7 @@ def render(
     tree,
     fire,
     bulldozed,
+    burned,
     title,
     grid,
     time,
@@ -147,23 +150,26 @@ def render(
     TREE = tree
     FIRE = fire
     BULLDOZED = bulldozed
+    BURNED = burned
     # Select color scheme based on is_night
     if is_night:
         COLOR_EMPTY = COLOR_EMPTY_NIGHT
         COLOR_TREE = COLOR_TREE_NIGHT
         COLOR_FIRE = COLOR_FIRE_NIGHT
         COLOR_BULLDOZED = COLOR_BULLDOZED_NIGHT
+        COLOR_BURNED = COLOR_BURNED_NIGHT
         COLOR_GAUGE = COLOR_GAUGE_NIGHT
     else:
         COLOR_EMPTY = COLOR_EMPTY_DAY
         COLOR_TREE = COLOR_TREE_DAY
         COLOR_FIRE = COLOR_FIRE_DAY
         COLOR_BULLDOZED = COLOR_BULLDOZED_DAY
+        COLOR_BURNED = COLOR_BURNED_DAY
         COLOR_GAUGE = COLOR_GAUGE_DAY
 
     # Assumes that cells values are in ascending order and paired with its colors
-    COLORS = [COLOR_EMPTY, COLOR_TREE, COLOR_BULLDOZED, COLOR_FIRE]
-    CELLS = [EMPTY, TREE, BULLDOZED, FIRE]
+    COLORS = [COLOR_EMPTY, COLOR_TREE, COLOR_BULLDOZED, COLOR_FIRE, COLOR_BURNED]
+    CELLS = [EMPTY, TREE, BULLDOZED, FIRE, BURNED]
     NORM, CMAP = get_norm_cmap(CELLS, COLORS)
 
     # local_grid = moore_n(N_LOCAL, pos, grid, EMPTY)

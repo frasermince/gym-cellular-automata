@@ -114,10 +114,11 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             "altitude",
             "zoom",
         ]
-        self._reward_per_tree = 1
+        self._reward_per_tree = 0
         self._reward_per_empty = 0
-        self._reward_per_fire = 0
-        self._reward_per_bulldozed = 0.0
+        self._reward_per_fire = -1
+        self._reward_per_bulldozed = 0
+        self._reward_per_burned = -1
 
         self.num_envs = num_envs
         self.title = "ForestFireBulldozer" + str(nrows) + "x" + str(ncols)
@@ -142,8 +143,9 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
 
         self._empty = 0  # Empty cell
         self._tree = 3  # Tree cell
-        self._fire = 25  # Fire cell
         self._bulldozed = 10  # Bulldozed cell
+        self._fire = 25  # Fire cell
+        self._burned = 50  # Burned cell
 
         # Initial Condition Parameters
 
@@ -252,7 +254,12 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         #     self._empty, self._tree, self._fire, **self.ca_space
         # )
         self.ca = PartiallyObservableForestFireJax(
-            self._empty, self._tree, self._fire, self._bulldozed, **self.ca_space
+            self._empty,
+            self._tree,
+            self._fire,
+            self._bulldozed,
+            self._burned,
+            **self.ca_space,
         )
 
         self.move = MoveJax(self._action_sets, **self.move_space)
@@ -537,6 +544,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
                 dict_counts[self._tree],
                 dict_counts[self._fire],
                 dict_counts[self._bulldozed],
+                dict_counts[self._burned],
             ]
         )
 
@@ -548,9 +556,10 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
                 self._reward_per_tree,
                 self._reward_per_fire,
                 self._reward_per_bulldozed,
+                self._reward_per_burned,
             ]
         )
-        return jnp.dot(reward_weights, cell_counts_relative) - 1
+        return (jnp.dot(reward_weights, cell_counts_relative) - 1) / 2
 
     def _is_done(self, grid):
         return jnp.invert(jnp.any(grid == self._fire))
@@ -876,6 +885,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             self._tree: jnp.sum(grid == self._tree),
             self._fire: jnp.sum(grid == self._fire),
             self._bulldozed: jnp.sum(grid == self._bulldozed),
+            self._burned: jnp.sum(grid == self._burned),
         }
 
         return counts

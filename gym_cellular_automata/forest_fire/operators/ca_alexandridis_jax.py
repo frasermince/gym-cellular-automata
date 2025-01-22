@@ -43,13 +43,14 @@ class PartiallyObservableForestFireJax(Operator):
 
     deterministic = False
 
-    def __init__(self, empty, tree, fire, bulldozed, *args, **kwargs):
+    def __init__(self, empty, tree, fire, bulldozed, burned, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
         self.empty = empty
         self.tree = tree
         self.fire = fire
         self.bulldozed = bulldozed
+        self.burned = burned
         if self.context_space is None:
             self.context_space = spaces.Box(0.0, 1.0, shape=(2,), dtype=TYPE_BOX)
 
@@ -209,7 +210,9 @@ class PartiallyObservableForestFireJax(Operator):
         # Create masks for different cell states
         tree_mask = grid == self.tree
         fire_mask = grid == self.fire
-        empty_mask = grid == self.empty
+        empty_mask = (
+            (grid == self.empty) | (grid == self.bulldozed) | (grid == self.burned)
+        )
 
         # Get neighborhoods for all cells
 
@@ -258,7 +261,7 @@ class PartiallyObservableForestFireJax(Operator):
                 empty_mask & (random_values_grow < shared_context["p_tree"]),
                 self.tree,
                 jnp.where(
-                    fire_mask & (per_env_context["fire_age"] <= 1), self.empty, grid
+                    fire_mask & (per_env_context["fire_age"] <= 1), self.burned, grid
                 ),
             ),
         )
