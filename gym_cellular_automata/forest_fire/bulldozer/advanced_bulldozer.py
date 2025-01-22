@@ -559,7 +559,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
                 self._reward_per_burned,
             ]
         )
-        return (jnp.dot(reward_weights, cell_counts_relative) - 1) / 2
+        return jnp.dot(reward_weights, cell_counts_relative)
 
     def _is_done(self, grid):
         return jnp.invert(jnp.any(grid == self._fire))
