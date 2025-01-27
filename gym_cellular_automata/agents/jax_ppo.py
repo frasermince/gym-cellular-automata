@@ -54,15 +54,13 @@ SHOULD_SHARD = False
 
 
 class Network(nn.Module):
-    log_grid_shapes: bool = False
-
     @nn.compact
     def __call__(self, grid):
         if grid.shape[1] <= 16:
             # For small grids, use smaller strides
             x = nn.Conv(
                 32,
-                kernel_size=(4, 4),
+                kernel_size=(3, 3),
                 strides=(2, 2),  # Reduced stride
                 padding="VALID",
                 kernel_init=orthogonal(np.sqrt(2)),
@@ -71,17 +69,8 @@ class Network(nn.Module):
             x = nn.relu(x)
             x = nn.Conv(
                 64,
-                kernel_size=(2, 2),
-                strides=(1, 1),  # Reduced stride
-                padding="VALID",
-                kernel_init=orthogonal(np.sqrt(2)),
-                bias_init=constant(0.0),
-            )(x)
-            x = nn.relu(x)
-            x = nn.Conv(
-                64,
-                kernel_size=(2, 2),
-                strides=(1, 1),  # Reduced stride
+                kernel_size=(3, 3),
+                strides=(2, 2),  # Reduced stride
                 padding="VALID",
                 kernel_init=orthogonal(np.sqrt(2)),
                 bias_init=constant(0.0),
@@ -104,18 +93,11 @@ class Network(nn.Module):
                 kernel_init=orthogonal(np.sqrt(2)),
                 bias_init=constant(0.0),
             )(x)
-            x = nn.relu(x)
-            x = nn.Conv(
-                64,
-                kernel_size=(3, 3),
-                strides=(1, 1),
-                padding="VALID",
-                kernel_init=orthogonal(np.sqrt(2)),
-                bias_init=constant(0.0),
-            )(x)
+
         x = nn.relu(x)
         x = x.reshape((x.shape[0], -1))
-        x = nn.Dense(512, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
+
+        x = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
             x
         )
         x = nn.relu(x)
@@ -247,7 +229,7 @@ def run_rollout_loop(
     host = os.environ.get("EXTENDED_MIND_HOST", "")
     if not host:
         host = "local"
-    run_name = f"{args.env.env_id}__seed={args.exp.seed}__speed={args.env.speed_multiplier}__size={args.env.size}__lr={args.ppo.learning_rate}__host={host}__{int(time.time())}"
+    run_name = f"{args.env.env_id}__lr={args.ppo.learning_rate}__host={host}__seed={args.exp.seed}__speed={args.env.speed_multiplier}__size={args.env.size}__{int(time.time())}"
     checkpoint_options = orbax.checkpoint.CheckpointManagerOptions(
         max_to_keep=2, create=True
     )
@@ -925,7 +907,6 @@ def run_rollout_loop(
         key,
         global_step,
     ):
-        # Remove @jax.jit and use jax.lax.fori_loop instead
         def body_fun(step, carry):
             (
                 agent_state,
