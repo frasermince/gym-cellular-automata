@@ -56,6 +56,7 @@ SHOULD_SHARD = False
 class Network(nn.Module):
     @nn.compact
     def __call__(self, grid):
+        x = grid / 255.0
         if grid.shape[1] <= 16:
             # For small grids, use smaller strides
             x = nn.Conv(
@@ -65,7 +66,7 @@ class Network(nn.Module):
                 padding="VALID",
                 kernel_init=orthogonal(np.sqrt(2)),
                 bias_init=constant(0.0),
-            )(grid)
+            )(x)
             x = nn.relu(x)
             x = nn.Conv(
                 64,
@@ -83,7 +84,7 @@ class Network(nn.Module):
                 padding="VALID",
                 kernel_init=orthogonal(np.sqrt(2)),
                 bias_init=constant(0.0),
-            )(grid)
+            )(x)
             x = nn.relu(x)
             x = nn.Conv(
                 64,
