@@ -71,12 +71,12 @@ class Network(nn.Module):
     @nn.compact
     def __call__(self, grid):
         x = grid / 255.0
-        if False:
+        if grid.shape[1] <= 32:
             # For small grids, use smaller strides
             x = nn.Conv(
                 32,
-                kernel_size=(3, 3),
-                strides=(2, 2),  # Reduced stride
+                kernel_size=(4, 4),
+                strides=(3, 3),  # Reduced stride
                 padding="VALID",
                 kernel_init=orthogonal(np.sqrt(2)),
                 bias_init=constant(0.0),
@@ -85,7 +85,7 @@ class Network(nn.Module):
             x = nn.Conv(
                 64,
                 kernel_size=(3, 3),
-                strides=(2, 2),  # Reduced stride
+                strides=(1, 1),  # Reduced stride
                 padding="VALID",
                 kernel_init=orthogonal(np.sqrt(2)),
                 bias_init=constant(0.0),
