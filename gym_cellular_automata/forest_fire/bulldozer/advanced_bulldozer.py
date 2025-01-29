@@ -34,6 +34,7 @@ from .utils.extension_utils import (
     apply_extensions,
     EXTENSION_REGISTRY,
 )
+from jax.experimental import checkify
 
 import math
 from functools import partial
@@ -134,11 +135,12 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             "altitude",
             "zoom",
         ]
-        self._reward_per_tree = 0
+        self._reward_per_tree = 1
         self._reward_per_empty = 0
         self._reward_per_fire = -1
         self._reward_per_bulldozed = 0
-        self._reward_per_burned = -1
+        self._reward_per_burned = 0
+        self._reward_per_burned = 0
 
         self.num_envs = num_envs
         self.title = "ForestFireBulldozer" + str(nrows) + "x" + str(ncols)
@@ -212,7 +214,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
 
         self._effects = {
             # self._fire: self._bulldozed,
-            self._tree: self._bulldozed,
+            self._tree: self._empty,
         }  # Substitution Effect
 
         # Time to do things
@@ -404,7 +406,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
     def reset(self, *, seed: Optional[int] = None, options: Optional[dict] = None):
         self._resample_initial = True
         initial_grid, initial_context = self.initial_state
-
+        # checkified_grid_to_rgb = checkify.checkify(self.MDP.grid_to_rgb)
         rgb_grid = jax.vmap(self.MDP.grid_to_rgb, in_axes=(0, 0, 0))(
             initial_grid,
             initial_context["per_env_context"],
@@ -593,7 +595,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
                 self._reward_per_burned,
             ]
         )
-        return jnp.dot(reward_weights, cell_counts_relative)
+        return (jnp.dot(reward_weights, cell_counts_relative) - 1) / 2
 
     def _is_done(self, grid):
         return jnp.invert(jnp.any(grid == self._fire))
@@ -972,13 +974,8 @@ class MDP(Operator):
         # Base channels
         channels = [transformed_grid]
 
-        # Position channel
-        x_pos, y_pos = position[..., 0], position[..., 1]
         pos_channel = jnp.zeros_like(grid)
-        pos_channel = pos_channel.at[x_pos, y_pos].set(1)
-        day_night_channel = jnp.where(
-            per_env_context["is_night"], jnp.ones_like(grid), jnp.zeros_like(grid)
-        )
+        day_night_channel = jnp.zeros_like(grid)
         channels.append(pos_channel)
         channels.append(day_night_channel)
 
@@ -988,6 +985,8 @@ class MDP(Operator):
         )
         channels = jnp.stack([*channels, *extension_channels], axis=-1)
 
+        # checkified_grid_to_rgb = checkify.checkify(self.grid_to_rgb)
+        # error, rgb_grid = checkified_grid_to_rgb(channels, per_env_context, position)
         rgb_grid = self.grid_to_rgb(channels, per_env_context, position)
         return rgb_grid, channels
 
@@ -1053,6 +1052,18 @@ class MDP(Operator):
             is_night[..., None], night_colors["position"], day_colors["position"]
         )
         rgb_grid = rgb_grid.at[position[..., 0], position[..., 1]].set(position_color)
+        # Assert that the grid is never completely empty
+        # Count non-empty cells (anything that's not the empty color)
+        # non_empty_mask = ~jnp.all(
+        #     rgb_grid
+        #     == jnp.where(
+        #         is_night[..., None], night_colors["empty"], day_colors["empty"]
+        #     ),
+        #     axis=-1,
+        # )
+
+        # Assert at least one cell is non-empty
+        # checkify.check(jnp.sum(non_empty_mask) >= 1, "Grid cannot be completely empty")
 
         return rgb_grid
 

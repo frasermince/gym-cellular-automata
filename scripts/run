@@ -160,10 +160,10 @@ def get_run(env: Env, actor):
         )
 
         new_episode_return = episode_stats.episode_returns + next_info["reward"]
-        if jnp.any(next_info["terminated"]):
-            import pdb
+        # if jnp.any(next_info["terminated"]):
+        #     import pdb
 
-            pdb.set_trace()
+        #     pdb.set_trace()
         step_tuple = env.conditional_reset(step_tuple, action)
 
         if next_done.any():
@@ -614,7 +614,7 @@ def parse_args():
     # PPO args
     ppo = parser.add_argument_group("PPO")
     ppo.add_argument("--learning-rate", type=float, default=2.5e-4)
-    ppo.add_argument("--anneal-lr", action="store_true")
+    ppo.add_argument("--anneal-lr", action="store_true", default=True)
     ppo.add_argument("--gamma", type=float, default=0.99)
     ppo.add_argument("--gae-lambda", type=float, default=0.95)
     # ... add other PPO args

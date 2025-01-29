@@ -261,7 +261,7 @@ class PartiallyObservableForestFireJax(Operator):
                 empty_mask & (random_values_grow < shared_context["p_tree"]),
                 self.tree,
                 jnp.where(
-                    fire_mask & (per_env_context["fire_age"] <= 1), self.burned, grid
+                    fire_mask & (per_env_context["fire_age"] <= 1), self.empty, grid
                 ),
             ),
         )
