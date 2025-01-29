@@ -33,9 +33,22 @@ def policy_printer(args):
 
 
 def debug_printer(args):
-    newlogprob, logprob = args
-    print(f"\nNewlogprob - {newlogprob}")
-    print(f"Logprob  - min: {logprob}")
+    [
+        count,
+        num_minibatches,
+        update_epochs,
+        num_iterations,
+        learning_rate,
+        frac,
+        learning_rate_frac,
+    ] = args
+    print(f"Count: {count}")
+    print(f"Num Minibatches: {num_minibatches}")
+    print(f"Update Epochs: {update_epochs}")
+    print(f"Num Iterations: {num_iterations}")
+    print(f"Learning Rate: {learning_rate}")
+    print(f"Learning Rate Fraction: {frac}")
+    print(f"Learning Rate Fraction: {learning_rate_frac}")
 
 
 padding_type = "SAME"
@@ -54,25 +67,15 @@ SHOULD_SHARD = False
 
 
 class Network(nn.Module):
-    log_grid_shapes: bool = False
-
     @nn.compact
     def __call__(self, grid):
-        if grid.shape[1] <= 16:
+        x = grid / 255.0
+        if grid.shape[1] <= 32:
             # For small grids, use smaller strides
             x = nn.Conv(
                 32,
-                kernel_size=(3, 3),
-                strides=(1, 1),  # Reduced stride
-                padding="VALID",
-                kernel_init=orthogonal(np.sqrt(2)),
-                bias_init=constant(0.0),
-            )(grid)
-            x = nn.relu(x)
-            x = nn.Conv(
-                64,
-                kernel_size=(3, 3),
-                strides=(1, 1),  # Reduced stride
+                kernel_size=(4, 4),
+                strides=(3, 3),  # Reduced stride
                 padding="VALID",
                 kernel_init=orthogonal(np.sqrt(2)),
                 bias_init=constant(0.0),
@@ -80,7 +83,7 @@ class Network(nn.Module):
             x = nn.relu(x)
             x = nn.Conv(
                 64,
-                kernel_size=(2, 2),
+                kernel_size=(3, 3),
                 strides=(1, 1),  # Reduced stride
                 padding="VALID",
                 kernel_init=orthogonal(np.sqrt(2)),
@@ -94,7 +97,7 @@ class Network(nn.Module):
                 padding="VALID",
                 kernel_init=orthogonal(np.sqrt(2)),
                 bias_init=constant(0.0),
-            )(grid)
+            )(x)
             x = nn.relu(x)
             x = nn.Conv(
                 64,
@@ -113,8 +116,10 @@ class Network(nn.Module):
                 kernel_init=orthogonal(np.sqrt(2)),
                 bias_init=constant(0.0),
             )(x)
+
         x = nn.relu(x)
         x = x.reshape((x.shape[0], -1))
+
         x = nn.Dense(512, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
             x
         )
@@ -189,7 +194,6 @@ class Storage:
     advantages: jnp.array
     returns: jnp.array
     rewards: jnp.array
-    contexts: dict
 
 
 @flax.struct.dataclass
@@ -199,12 +203,22 @@ class EpisodeStatistics:
     returned_episode_returns: jnp.array
     returned_episode_lengths: jnp.array
     amount_finished: jnp.array = 0
-    recent_returns: jnp.array = None  # Will be initialized later
-    recent_lengths: jnp.array = None  # Will be initialized later
+    recent_returns: jnp.array = None
+    recent_lengths: jnp.array = None
     recent_idx: jnp.array = 0
+    # Current episode tracking
+    current_day_correct: jnp.array = None  # Track current episodes
+    current_night_correct: jnp.array = None
+    current_day_steps: jnp.array = None
+    current_night_steps: jnp.array = None
+    # Recent episode stats
+    recent_day_correct: jnp.array = None  # Store completed episodes
+    recent_night_correct: jnp.array = None
+    recent_day_steps: jnp.array = None
+    recent_night_steps: jnp.array = None
 
 
-def build_storage_return(storage, env):
+def build_storage_return(storage, recording_contexts, env):
     # Save grid observations to JSON file
     grid_obs = jax.device_get(storage.grid_obs).transpose(
         1, 0, *range(2, storage.grid_obs.ndim)
@@ -214,11 +228,11 @@ def build_storage_return(storage, env):
     )  # Get array from device and swap first two dims
     contexts = {}
     for context_key in env.per_env_context_keys:
-        if context_key in storage.contexts.keys():
+        if context_key in recording_contexts.keys():
             contexts[context_key] = jax.device_get(
-                storage.contexts[context_key]
-            ).transpose(1, 0, *range(2, storage.contexts[context_key].ndim))
-    contexts["time"] = jax.device_get(storage.contexts["time"]).transpose(1, 0)
+                recording_contexts[context_key]
+            ).transpose(1, 0, *range(2, recording_contexts[context_key].ndim))
+    contexts["time"] = jax.device_get(recording_contexts["time"]).transpose(1, 0)
     return {"grid_obs": grid_obs, "position_obs": position_obs, "contexts": contexts}
 
 
@@ -237,7 +251,7 @@ def run_rollout_loop(
     host = os.environ.get("EXTENDED_MIND_HOST", "")
     if not host:
         host = "local"
-    run_name = f"{args.env.env_id}__seed={args.exp.seed}__speed={args.env.speed_multiplier}__size={args.env.size}__lr={args.ppo.learning_rate}__host={host}__{int(time.time())}"
+    run_name = f"{args.env.env_id}__lr={args.ppo.learning_rate}__host={host}__seed={args.exp.seed}__speed={args.env.speed_multiplier}__size={args.env.size}__{int(time.time())}"
     checkpoint_options = orbax.checkpoint.CheckpointManagerOptions(
         max_to_keep=2, create=True
     )
@@ -292,6 +306,16 @@ def run_rollout_loop(
         recent_returns=jnp.zeros(10, dtype=jnp.float32),
         recent_lengths=jnp.zeros(10, dtype=jnp.int32),
         recent_idx=jnp.array(0, dtype=jnp.int32),
+        # Current episode tracking
+        current_day_correct=jnp.zeros(args.env.num_envs, dtype=jnp.int32),
+        current_night_correct=jnp.zeros(args.env.num_envs, dtype=jnp.int32),
+        current_day_steps=jnp.zeros(args.env.num_envs, dtype=jnp.int32),
+        current_night_steps=jnp.zeros(args.env.num_envs, dtype=jnp.int32),
+        # Recent episode stats
+        recent_day_correct=jnp.zeros(10, dtype=jnp.int32),
+        recent_night_correct=jnp.zeros(10, dtype=jnp.int32),
+        recent_day_steps=jnp.zeros(10, dtype=jnp.int32),
+        recent_night_steps=jnp.zeros(10, dtype=jnp.int32),
     )
     # handle, recv, send, step_env = envs.xla()
 
@@ -309,7 +333,23 @@ def run_rollout_loop(
         new_episode_return = current_episode_stats.episode_returns + next_info["reward"]
         new_episode_length = current_episode_stats.episode_lengths + 1
 
-        # Update recent stats when episodes finish
+        # Track correct extension usage (last action in tuple)
+        is_night = obs[1]["per_env_context"]["is_night"]
+        extension_action = action[:, -1]  # Get last action from tuple
+
+        # Count correct actions (2 for day, 1 for night)
+        day_correct = (1 - is_night) * (extension_action == 2)
+        night_correct = is_night * (extension_action == 1)
+
+        # Update current episode stats
+        current_episode_stats = current_episode_stats.replace(
+            current_day_correct=current_episode_stats.current_day_correct + day_correct,
+            current_night_correct=current_episode_stats.current_night_correct
+            + night_correct,
+            current_day_steps=current_episode_stats.current_day_steps + (1 - is_night),
+            current_night_steps=current_episode_stats.current_night_steps + is_night,
+        )
+
         def update_recent_stats(stats, returns, lengths, mask):
             # Instead of using boolean indexing, we'll use a scan
             num_finished = jnp.sum(mask)
@@ -328,6 +368,35 @@ def run_rollout_loop(
                     stats.recent_lengths.at[new_idx].set(lengths[env_idx]),
                     stats.recent_lengths,
                 )
+                # Update recent day/night stats when episode finishes
+                new_day_correct = jnp.where(
+                    mask[env_idx],
+                    stats.recent_day_correct.at[new_idx].set(
+                        stats.current_day_correct[env_idx]
+                    ),
+                    stats.recent_day_correct,
+                )
+                new_night_correct = jnp.where(
+                    mask[env_idx],
+                    stats.recent_night_correct.at[new_idx].set(
+                        stats.current_night_correct[env_idx]
+                    ),
+                    stats.recent_night_correct,
+                )
+                new_day_steps = jnp.where(
+                    mask[env_idx],
+                    stats.recent_day_steps.at[new_idx].set(
+                        stats.current_day_steps[env_idx]
+                    ),
+                    stats.recent_day_steps,
+                )
+                new_night_steps = jnp.where(
+                    mask[env_idx],
+                    stats.recent_night_steps.at[new_idx].set(
+                        stats.current_night_steps[env_idx]
+                    ),
+                    stats.recent_night_steps,
+                )
                 new_idx = (new_idx + mask[env_idx].astype(jnp.int32)) % 10
 
                 return (
@@ -335,6 +404,10 @@ def run_rollout_loop(
                         stats.replace(
                             recent_returns=new_returns,
                             recent_lengths=new_lengths,
+                            recent_day_correct=new_day_correct,
+                            recent_night_correct=new_night_correct,
+                            recent_day_steps=new_day_steps,
+                            recent_night_steps=new_night_steps,
                             recent_idx=new_idx,
                         ),
                         returns,
@@ -349,8 +422,14 @@ def run_rollout_loop(
                 body_fun, (stats, returns, lengths, mask), jnp.arange(mask.shape[0])
             )
 
+            # Reset current episode stats for finished episodes
             return final_stats.replace(
-                recent_idx=(stats.recent_idx + num_finished) % 10
+                recent_idx=(stats.recent_idx + num_finished) % 10,
+                # Reset current stats for finished episodes
+                # current_day_correct=final_stats.current_day_correct * (1 - mask),
+                # current_night_correct=final_stats.current_night_correct * (1 - mask),
+                # current_day_steps=final_stats.current_day_steps * (1 - mask),
+                # current_night_steps=final_stats.current_night_steps * (1 - mask),
             )
 
         finished_mask = next_info["terminated"] + next_info["TimeLimit.truncated"]
@@ -415,7 +494,24 @@ def run_rollout_loop(
             - (count // (args.ppo.num_minibatches * args.ppo.update_epochs))
             / args.num_iterations
         )
-        return learning_rate * frac
+
+        # jax.debug.callback(
+        #     debug_printer,
+        #     (
+        #         jnp.array(
+        #             [
+        #                 count,
+        #                 args.ppo.num_minibatches,
+        #                 args.ppo.update_epochs,
+        #                 args.num_iterations,
+        #                 args.ppo.learning_rate,
+        #                 frac,
+        #                 args.ppo.learning_rate * frac,
+        #             ]
+        #         )
+        #     ),
+        # )
+        return args.ppo.learning_rate * frac
 
     network = Network()
     actor = Actor(action_dims=env.action_space.nvec[0], choose_k=env.extension_choices)
@@ -438,6 +534,11 @@ def run_rollout_loop(
             network_params,
             grid_sample,
         ),
+    )
+    print(
+        sum(x.size for x in jax.tree_leaves(network_params)),
+        sum(x.size for x in jax.tree_leaves(actor_params)),
+        sum(x.size for x in jax.tree_leaves(critic_params)),
     )
 
     agent_state = TrainState.create(
@@ -466,104 +567,100 @@ def run_rollout_loop(
     # ALGO Logic: Storage setup
     grid, context = env.observation_space
     per_env_context = context["per_env_context"]
-    if len(jax.devices()) >= 4 and SHARD_STORAGE and SHOULD_SHARD:
-        mesh = jax.make_mesh((4,), ("devices"))
-        with mesh:
-            contexts = {}
-            if args.viz.gif:
-                for context_key in env.per_env_context_keys:
-                    contexts[context_key] = jax.device_put(
-                        jnp.zeros(
-                            (args.exp.num_ppo_steps,)
-                            + per_env_context[context_key].shape
-                        ),
-                        NamedSharding(mesh, P("devices", None)),
-                    )
-                contexts["time"] = jax.device_put(
-                    jnp.zeros((args.exp.num_ppo_steps,) + context["time"].shape),
-                    NamedSharding(mesh, P("devices", None)),
+    # if len(jax.devices()) >= 4 and SHARD_STORAGE and SHOULD_SHARD:
+    #     mesh = jax.make_mesh((4,), ("devices"))
+    #     with mesh:
+    #         contexts = {}
+    #         if args.viz.gif:
+    #             for context_key in env.per_env_context_keys:
+    #                 contexts[context_key] = jax.device_put(
+    #                     jnp.zeros(
+    #                         (args.exp.num_ppo_steps,)
+    #                         + per_env_context[context_key].shape
+    #                     ),
+    #                     NamedSharding(mesh, P("devices", None)),
+    #                 )
+    #             contexts["time"] = jax.device_put(
+    #                 jnp.zeros((args.exp.num_ppo_steps,) + context["time"].shape),
+    #                 NamedSharding(mesh, P("devices", None)),
+    #             )
+    #         storage = Storage(
+    #             grid_obs=jax.device_put(
+    #                 jnp.zeros((args.exp.num_ppo_steps,) + grid.shape),
+    #                 NamedSharding(mesh, P("devices", None, None, None)),
+    #             ),
+    #             position_obs=jax.device_put(
+    #                 jnp.zeros(
+    #                     (args.exp.num_ppo_steps,) + context["position"].shape,
+    #                     dtype=jnp.int32,
+    #                 ),
+    #                 NamedSharding(mesh, P("devices", None)),
+    #             ),
+    #             contexts=contexts,
+    #             actions=jax.device_put(
+    #                 jnp.zeros(
+    #                     (args.exp.num_ppo_steps,) + env.total_action_space.shape,
+    #                     dtype=jnp.int32,
+    #                 ),
+    #                 NamedSharding(mesh, P("devices", None)),
+    #             ),
+    #             logprobs=jax.device_put(
+    #                 jnp.zeros((args.exp.num_ppo_steps, *env.total_action_space.shape)),
+    #                 NamedSharding(mesh, P("devices", None)),
+    #             ),
+    #             dones=jax.device_put(
+    #                 jnp.zeros((args.exp.num_ppo_steps, args.env.num_envs)),
+    #                 NamedSharding(mesh, P("devices")),
+    #             ),
+    #             values=jax.device_put(
+    #                 jnp.zeros((args.exp.num_ppo_steps, args.env.num_envs)),
+    #                 NamedSharding(mesh, P("devices")),
+    #             ),
+    #             advantages=jax.device_put(
+    #                 jnp.zeros((args.exp.num_ppo_steps, args.env.num_envs)),
+    #                 NamedSharding(mesh, P("devices")),
+    #             ),
+    #             returns=jax.device_put(
+    #                 jnp.zeros((args.exp.num_ppo_steps, args.env.num_envs)),
+    #                 NamedSharding(mesh, P("devices")),
+    #             ),
+    #             rewards=jax.device_put(
+    #                 jnp.zeros((args.exp.num_ppo_steps, args.env.num_envs)),
+    #                 NamedSharding(mesh, P("devices")),
+    #             ),
+    #         )
+    # else:
+    recording_contexts = {}
+    if args.viz.gif:
+        for context_key in env.per_env_context_keys:
+            if context_key in per_env_context.keys():
+                recording_contexts[context_key] = jnp.zeros(
+                    (args.exp.num_ppo_steps,) + per_env_context[context_key].shape
                 )
-            storage = Storage(
-                grid_obs=jax.device_put(
-                    jnp.zeros((args.exp.num_ppo_steps,) + grid.shape),
-                    NamedSharding(mesh, P("devices", None, None, None)),
-                ),
-                position_obs=jax.device_put(
-                    jnp.zeros(
-                        (args.exp.num_ppo_steps,) + context["position"].shape,
-                        dtype=jnp.int32,
-                    ),
-                    NamedSharding(mesh, P("devices", None)),
-                ),
-                contexts=contexts,
-                actions=jax.device_put(
-                    jnp.zeros(
-                        (args.exp.num_ppo_steps,) + env.total_action_space.shape,
-                        dtype=jnp.int32,
-                    ),
-                    NamedSharding(mesh, P("devices", None)),
-                ),
-                logprobs=jax.device_put(
-                    jnp.zeros((args.exp.num_ppo_steps, *env.total_action_space.shape)),
-                    NamedSharding(mesh, P("devices", None)),
-                ),
-                dones=jax.device_put(
-                    jnp.zeros((args.exp.num_ppo_steps, args.env.num_envs)),
-                    NamedSharding(mesh, P("devices")),
-                ),
-                values=jax.device_put(
-                    jnp.zeros((args.exp.num_ppo_steps, args.env.num_envs)),
-                    NamedSharding(mesh, P("devices")),
-                ),
-                advantages=jax.device_put(
-                    jnp.zeros((args.exp.num_ppo_steps, args.env.num_envs)),
-                    NamedSharding(mesh, P("devices")),
-                ),
-                returns=jax.device_put(
-                    jnp.zeros((args.exp.num_ppo_steps, args.env.num_envs)),
-                    NamedSharding(mesh, P("devices")),
-                ),
-                rewards=jax.device_put(
-                    jnp.zeros((args.exp.num_ppo_steps, args.env.num_envs)),
-                    NamedSharding(mesh, P("devices")),
-                ),
-            )
-    else:
-        contexts = {}
-        if args.viz.gif:
-            for context_key in env.per_env_context_keys:
-                if context_key in per_env_context.keys():
-                    contexts[context_key] = jnp.zeros(
-                        (args.exp.num_ppo_steps,) + per_env_context[context_key].shape
-                    )
-            contexts["time"] = jax.device_put(
-                jnp.zeros((args.exp.num_ppo_steps,) + context["time"].shape),
-            )
-        storage = Storage(
-            grid_obs=jnp.zeros((args.exp.num_ppo_steps,) + grid.shape),
-            position_obs=jnp.zeros(
-                (args.exp.num_ppo_steps,) + context["position"].shape, dtype=jnp.int32
-            ),
-            actions=jnp.zeros(
-                (args.exp.num_ppo_steps,) + env.total_action_space.shape,
-                dtype=jnp.int32,
-            ),
-            logprobs=jnp.zeros((args.exp.num_ppo_steps, *env.total_action_space.shape)),
-            dones=jnp.zeros((args.exp.num_ppo_steps, args.env.num_envs)),
-            values=jnp.zeros((args.exp.num_ppo_steps, args.env.num_envs)),
-            advantages=jnp.zeros((args.exp.num_ppo_steps, args.env.num_envs)),
-            returns=jnp.zeros((args.exp.num_ppo_steps, args.env.num_envs)),
-            rewards=jnp.zeros((args.exp.num_ppo_steps, args.env.num_envs)),
-            contexts=contexts,
+        recording_contexts["time"] = jax.device_put(
+            jnp.zeros((args.exp.num_ppo_steps,) + context["time"].shape),
         )
+    storage = Storage(
+        grid_obs=jnp.zeros((args.exp.num_ppo_steps,) + grid.shape),
+        position_obs=jnp.zeros(
+            (args.exp.num_ppo_steps,) + context["position"].shape, dtype=jnp.int32
+        ),
+        actions=jnp.zeros(
+            (args.exp.num_ppo_steps,) + env.total_action_space.shape,
+            dtype=jnp.int32,
+        ),
+        logprobs=jnp.zeros((args.exp.num_ppo_steps, *env.total_action_space.shape)),
+        dones=jnp.zeros((args.exp.num_ppo_steps, args.env.num_envs)),
+        values=jnp.zeros((args.exp.num_ppo_steps, args.env.num_envs)),
+        advantages=jnp.zeros((args.exp.num_ppo_steps, args.env.num_envs)),
+        returns=jnp.zeros((args.exp.num_ppo_steps, args.env.num_envs)),
+        rewards=jnp.zeros((args.exp.num_ppo_steps, args.env.num_envs)),
+    )
 
     @jax.jit
     def get_action_and_value(
         agent_state: TrainState,
         next_obs: np.ndarray,
-        next_done: np.ndarray,
-        storage: Storage,
-        step: int,
         key: jax.random.PRNGKey,
     ):
         """sample action, calculate value, logprob, entropy, and update storage"""
@@ -589,36 +686,11 @@ def run_rollout_loop(
             logprobs.append(logprob)
         actions = jnp.stack(actions, axis=1)
 
-        logprobs = jnp.concat(logprobs)
+        logprobs = jnp.stack(logprobs, axis=1)
 
         value = critic.apply(agent_state.params["critic_params"], hidden)
 
-        new_contexts = dict(storage.contexts)  # Create a new dict
-        if args.viz.gif:
-            per_env_context = context["per_env_context"]
-            for context_key in env.per_env_context_keys:
-                if (
-                    context_key in per_env_context.keys()
-                    and context_key in storage.contexts.keys()
-                ):
-                    new_contexts[context_key] = (
-                        storage.contexts[context_key]
-                        .at[step]
-                        .set(per_env_context[context_key])
-                    )
-            new_contexts["time"] = (
-                storage.contexts["time"].at[step].set(context["time"])
-            )
-        storage = storage.replace(
-            grid_obs=storage.grid_obs.at[step].set(next_grid_obs),
-            position_obs=storage.position_obs.at[step].set(next_position_obs),
-            dones=storage.dones.at[step].set(next_done),
-            actions=storage.actions.at[step].set(actions),
-            logprobs=storage.logprobs.at[step].set(logprobs),
-            values=storage.values.at[step].set(value.squeeze()),
-            contexts=new_contexts,
-        )
-        return storage, actions, key
+        return actions, logprobs, value.squeeze(1), key
 
     @jax.jit
     def get_action_and_value2(
@@ -813,17 +885,17 @@ def run_rollout_loop(
     global_step = 0
     start_time = time.time()
     next_obs, report = env.reset()
-    if len(jax.devices()) >= 4 and SHOULD_SHARD:
-        print(f"SHARDING to {jax.devices()}")
-        mesh = jax.make_mesh((4,), ("devices"))
-        grid = jax.device_put(next_obs[0], NamedSharding(mesh, P("devices")))
-        context = next_obs[1]
-        per_env_context = context["per_env_context"]
-        for context_key in env.per_env_context_keys:
-            per_env_context[context_key] = jax.device_put(
-                per_env_context[context_key], NamedSharding(mesh, P("devices"))
-            )
-        next_obs = (grid, context)
+    # if len(jax.devices()) >= 4 and SHOULD_SHARD:
+    #     print(f"SHARDING to {jax.devices()}")
+    #     mesh = jax.make_mesh((4,), ("devices"))
+    #     grid = jax.device_put(next_obs[0], NamedSharding(mesh, P("devices")))
+    #     context = next_obs[1]
+    #     per_env_context = context["per_env_context"]
+    #     for context_key in env.per_env_context_keys:
+    #         per_env_context[context_key] = jax.device_put(
+    #             per_env_context[context_key], NamedSharding(mesh, P("devices"))
+    #         )
+    #     next_obs = (grid, context)
 
     next_done = jnp.full(args.env.num_envs, False)
     next_info = {
@@ -834,65 +906,105 @@ def run_rollout_loop(
         "reward": jnp.zeros(args.env.num_envs),
     }
 
-    @jax.jit
-    def rollout(
-        agent_state,
-        episode_stats,
-        next_obs,
-        next_done,
-        next_info,
-        storage,
-        key,
-        global_step,
-    ):
-        # Remove @jax.jit and use jax.lax.fori_loop instead
-        def body_fun(step, carry):
+    def step_once(carry, step, env_step_fn):
+        agent_state, episode_stats, obs, done, info, key, recording_contexts = carry
+        action, logprob, value, key = get_action_and_value(agent_state, obs, key)
+
+        episode_stats, (next_obs, reward, next_done, next_info) = env_step_fn(
+            episode_stats, action, obs, info
+        )
+        new_recording_contexts = dict(recording_contexts)  # Create a new dict
+        if args.viz.gif:
+            per_env_context = obs[1]["per_env_context"]
+            for context_key in env.per_env_context_keys:
+                if (
+                    context_key in per_env_context.keys()
+                    and context_key in recording_contexts.keys()
+                ):
+                    new_recording_contexts[context_key] = (
+                        recording_contexts[context_key]
+                        .at[step]
+                        .set(per_env_context[context_key])
+                    )
+            new_recording_contexts["time"] = (
+                recording_contexts["time"].at[step].set(obs[1]["time"])
+            )
+        storage = Storage(
+            grid_obs=obs[0],
+            position_obs=obs[1]["position"],
+            actions=action,
+            logprobs=logprob,
+            dones=done,
+            values=value,
+            rewards=reward,
+            returns=jnp.zeros_like(reward),
+            advantages=jnp.zeros_like(reward),
+        )
+        return (
             (
                 agent_state,
                 episode_stats,
                 next_obs,
                 next_done,
                 next_info,
-                storage,
                 key,
-                global_step,
-            ) = carry
+                new_recording_contexts,
+            ),
+            storage,
+        )
 
-            global_step += args.env.num_envs
-            storage, action, key = get_action_and_value(
-                agent_state, next_obs, next_done, storage, step, key
-            )
-
-            episode_stats, (next_obs, reward, next_done, next_info) = step_env_wrapped(
-                episode_stats, action, next_obs, next_info
-            )
-            storage = storage.replace(rewards=storage.rewards.at[step].set(reward))
-
-            return (
-                agent_state,
-                episode_stats,
-                next_obs,
-                next_done,
-                next_info,
-                storage,
-                key,
-                global_step,
-            )
-
-        init_carry = (
+    def rollout(
+        agent_state,
+        episode_stats,
+        next_obs,
+        next_done,
+        next_info,
+        recording_contexts,
+        key,
+        step_once_fn,
+        max_steps,
+    ):
+        (
             agent_state,
             episode_stats,
             next_obs,
             next_done,
             next_info,
+            key,
+            recording_contexts,
+        ), storage = jax.lax.scan(
+            step_once_fn,
+            (
+                agent_state,
+                episode_stats,
+                next_obs,
+                next_done,
+                next_info,
+                key,
+                recording_contexts,
+            ),
+            (),
+            max_steps,
+        )
+        return (
+            agent_state,
+            episode_stats,
+            next_obs,
+            next_done,
+            next_info,
+            recording_contexts,
             storage,
             key,
-            global_step,
         )
-        return jax.lax.fori_loop(0, args.exp.num_ppo_steps, body_fun, init_carry)
+
+    rollout = partial(
+        rollout,
+        step_once_fn=partial(step_once, env_step_fn=step_env_wrapped),
+        max_steps=args.exp.num_ppo_steps,
+    )
 
     progress_bar = tqdm(
-        range(1, args.exp.total_timesteps // args.env.num_envs + 1),
+        range(1, args.num_iterations + 1),
         desc="Training",
         postfix={
             "SPS": "0",
@@ -920,24 +1032,24 @@ def run_rollout_loop(
             #     flattened = next_obs[0].reshape(-1, next_obs[0].shape[-1])
             #     jax.debug.visualize_array_sharding(flattened)
             iteration_time_start = time.time()
+
             (
                 agent_state,
                 episode_stats,
                 next_obs,
                 next_done,
                 next_info,
+                recording_contexts,
                 storage,
                 key,
-                global_step,
             ) = rollout(
                 agent_state,
                 episode_stats,
                 next_obs,
                 next_done,
                 next_info,
-                storage,
+                recording_contexts,
                 key,
-                global_step,
             )
             if args.viz.gif:
                 checkpoint_spacing = max(
@@ -951,7 +1063,9 @@ def run_rollout_loop(
                 ):
                     # print("Iteration video start", iteration)
                     storage_returns.append([])
-                    storage_returns[-1].append(build_storage_return(storage, env))
+                    storage_returns[-1].append(
+                        build_storage_return(storage, recording_contexts, env)
+                    )
                 # If we're within 7 steps after a checkpoint, keep adding steps
                 elif (
                     len(storage_returns) > 0
@@ -960,8 +1074,11 @@ def run_rollout_loop(
                     < args.viz.frames_per_recording
                 ):
                     # print("Iteration video continue", iteration)
-                    storage_returns[-1].append(build_storage_return(storage, env))
+                    storage_returns[-1].append(
+                        build_storage_return(storage, recording_contexts, env)
+                    )
             storage = compute_gae(agent_state, next_obs, next_done, storage)
+
             agent_state, loss, pg_loss, v_loss, entropy_loss, approx_kl, key = (
                 update_ppo(
                     agent_state,
@@ -993,6 +1110,33 @@ def run_rollout_loop(
                 # No sharding, use episode_stats directly
                 sharded_stats = episode_stats
                 total_finished = episode_stats.amount_finished
+
+            # Get actions from storage and compute distributions
+            actions = jax.device_get(storage.actions)
+
+            # Calculate percentages for each action type
+            movement_counts = np.bincount(actions[:, :, 0].flatten(), minlength=9)
+            movement_pcts = movement_counts / len(actions)
+
+            bulldoze_counts = np.bincount(actions[:, :, 1].flatten(), minlength=2)
+            bulldoze_pcts = bulldoze_counts / len(actions)
+
+            extension_counts = np.bincount(actions[:, :, 2].flatten(), minlength=3)
+            extension_pcts = extension_counts / len(actions)
+
+            # print("\nAction Distributions:")
+            # print(
+            #     "Movement (0-8):",
+            #     {i: f"{pct:.1%}" for i, pct in enumerate(movement_pcts)},
+            # )
+            # print(
+            #     "Bulldozing (0-1):",
+            #     {i: f"{pct:.1%}" for i, pct in enumerate(bulldoze_pcts)},
+            # )
+            # print(
+            #     "Extension (0-2):",
+            #     {i: f"{pct:.1%}" for i, pct in enumerate(extension_pcts)},
+            # )
             avg_episodic_return = np.mean(
                 jax.device_get(sharded_stats.returned_episode_returns)
             )
@@ -1076,6 +1220,38 @@ def run_rollout_loop(
                 recent_standard_error,
                 global_step,
             )
+
+            # Calculate extension correctness statistics
+            recent_day_correct = jax.device_get(sharded_stats.recent_day_correct)
+            recent_night_correct = jax.device_get(sharded_stats.recent_night_correct)
+            recent_day_steps = jax.device_get(sharded_stats.recent_day_steps)
+            recent_night_steps = jax.device_get(sharded_stats.recent_night_steps)
+
+            mask = (recent_returns != 0) & (recent_lengths != 0)
+            if jnp.any(mask):
+                # Calculate percentage of correct actions
+                day_correct_rate = jnp.where(
+                    recent_day_steps > 0,
+                    recent_day_correct / (recent_day_steps + 1e-8),
+                    0.0,
+                )[mask].mean()
+                night_correct_rate = jnp.where(
+                    recent_night_steps > 0,
+                    recent_night_correct / (recent_night_steps + 1e-8),
+                    0.0,
+                )[mask].mean()
+
+                writer.add_scalar(
+                    "extensions/night_correct_rate",
+                    night_correct_rate.item() * 100,
+                    global_step,
+                )
+                writer.add_scalar(
+                    "extensions/day_correct_rate",
+                    day_correct_rate.item() * 100,
+                    global_step,
+                )
+
             # Update progress bar
             progress_bar.set_postfix(
                 {
@@ -1144,6 +1320,11 @@ def load_actor(params_path: str, env):
     critic_params = critic.init(
         critic_key,
         network.apply(network_params, grid_sample),
+    )
+    print(
+        sum(x.size for x in jax.tree_leaves(network_params)),
+        sum(x.size for x in jax.tree_leaves(actor_params)),
+        sum(x.size for x in jax.tree_leaves(critic_params)),
     )
     agent_state = {
         "network_params": network_params,

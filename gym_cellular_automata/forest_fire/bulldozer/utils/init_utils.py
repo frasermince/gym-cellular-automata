@@ -232,7 +232,7 @@ def calc_pw(theta):
 
 def get_winds(use_hidden):
     winds = []
-    if True:
+    if use_hidden:
         thetas = wind_thetas
     else:
         thetas = [wind_thetas[0] for _ in range(len(wind_thetas))]

@@ -43,13 +43,14 @@ class PartiallyObservableForestFireJax(Operator):
 
     deterministic = False
 
-    def __init__(self, empty, tree, fire, bulldozed, *args, **kwargs):
+    def __init__(self, empty, tree, fire, bulldozed, burned, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
         self.empty = empty
         self.tree = tree
         self.fire = fire
         self.bulldozed = bulldozed
+        self.burned = burned
         if self.context_space is None:
             self.context_space = spaces.Box(0.0, 1.0, shape=(2,), dtype=TYPE_BOX)
 
@@ -79,7 +80,7 @@ class PartiallyObservableForestFireJax(Operator):
 
         # Vectorize the lookup
 
-        p_h = 0.48 - 0.03 * bulldozed_counts
+        p_h = 0.25 - 0.0001 * bulldozed_counts
         a = 0.078
         p_slope = jnp.exp(a * slope)
 
@@ -209,7 +210,9 @@ class PartiallyObservableForestFireJax(Operator):
         # Create masks for different cell states
         tree_mask = grid == self.tree
         fire_mask = grid == self.fire
-        empty_mask = grid == self.empty
+        empty_mask = (
+            (grid == self.empty) | (grid == self.bulldozed) | (grid == self.burned)
+        )
 
         # Get neighborhoods for all cells
 
@@ -239,7 +242,7 @@ class PartiallyObservableForestFireJax(Operator):
 
         # Generate random fire ages (3-5) for new fires
         key, fire_age_key = random.split(key)
-        new_fire_ages = random.randint(fire_age_key, grid.shape, 3, 5)
+        new_fire_ages = random.randint(fire_age_key, grid.shape, 10, 15)
 
         # Sets to fire if the following:
         # - If the cell is a tree
@@ -295,6 +298,7 @@ class PartiallyObservableForestFireJax(Operator):
         new_fire_age = jnp.where(fire_mask, new_fire_age - 1, new_fire_age)
         return new_grid, new_fire_age
 
+    @partial(jit, static_argnums=(0,))
     def update(self, grid, action, per_env_context, shared_context):
         wind_matrix, ft = shared_context["winds"][per_env_context["wind_index"]]
 

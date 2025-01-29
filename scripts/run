@@ -16,6 +16,7 @@ from tqdm import tqdm
 import flax
 import pickle
 from jax.profiler import trace
+from PIL import Image
 
 import optax
 
@@ -69,7 +70,7 @@ jax.config.update("jax_platform_name", DEFAULT_PLATFORM)
 
 
 @gif.frame
-def process_single_frame(args, empty, tree, fire, bulldozed, title, pos_fires):
+def process_single_frame(args, empty, tree, fire, bulldozed, burned, title, pos_fires):
     """Helper function that applies the decorator inside the process"""
 
     grid = args["grid"]
@@ -88,6 +89,7 @@ def process_single_frame(args, empty, tree, fire, bulldozed, title, pos_fires):
         tree,
         fire,
         bulldozed,
+        burned,
         title,
         grid,
         time_per_frame,
@@ -127,6 +129,12 @@ def get_run(env: Env, actor):
         ) = step_tuple
         print(f"Reward: {reward}")
         print(f"Time Step: {next_obs[1]['per_env_context']['time_step']}")
+        # print(f"Day Length: {next_obs[1]['per_env_context']['current_day_length']}")
+
+        # Create PIL Image from RGB array
+        # rgb_array = np.array(next_obs[0][0])
+        # pil_image = Image.fromarray(np.uint8(rgb_array))
+        # pil_image.save("test.png")
 
         new_episode_return = episode_stats.episode_returns + next_info["reward"]
         new_episode_length = episode_stats.episode_lengths + 1
@@ -152,6 +160,10 @@ def get_run(env: Env, actor):
         )
 
         new_episode_return = episode_stats.episode_returns + next_info["reward"]
+        # if jnp.any(next_info["terminated"]):
+        #     import pdb
+
+        #     pdb.set_trace()
         step_tuple = env.conditional_reset(step_tuple, action)
 
         if next_done.any():
@@ -170,6 +182,15 @@ class EpisodeStatistics:
     returned_episode_lengths: jnp.array
 
 
+def process_agent_obs_func(x):
+    """Process a single frame into a PIL Image and resize it 8x larger"""
+    rgb_array = np.array(x["agent_observation_grid"])
+    pil_image = Image.fromarray(np.uint8(rgb_array))
+    width, height = pil_image.size
+    resized_image = pil_image.resize((width * 64, height * 64))
+    return resized_image
+
+
 def save_frames_and_plots(
     env,
     name,
@@ -179,7 +200,7 @@ def save_frames_and_plots(
     no_hidden=False,
     parallel=False,
 ):
-    def get_paths(key: str, i: int) -> str:
+    def get_paths(key: str, i: int, key_name: str = "") -> str:
         paths = {}
         if isinstance(name, str):
             # Create main gifs directory
@@ -198,11 +219,11 @@ def save_frames_and_plots(
                 "gif": base_folder
                 / env_folder
                 / f"{name}_{i}"
-                / f"{name}_{key}_{i}.gif",
+                / f"{name}_{key_name}_{i}.gif",
                 "mp4": base_folder
                 / env_folder
                 / f"{name}_{i}"
-                / f"{name}_{key}_{i}.mp4",
+                / f"{name}_{key_name}_{i}.mp4",
                 "altitude": base_folder
                 / env_folder
                 / f"{name}_{i}"
@@ -237,20 +258,27 @@ def save_frames_and_plots(
             vegetation_plots[i].gcf().savefig(get_paths("vegitation", i))
             vegetation_plots[i].close()
 
-    process_func = partial(
-        process_single_frame,
-        empty=env._empty,
-        tree=env._tree,
-        fire=env._fire,
-        bulldozed=env._bulldozed,
-        title=env.spec.id if env.spec is not None else env.title,
-        pos_fires=env._pos_fire,
-    )
+    process_funcs = [
+        (
+            partial(
+                process_single_frame,
+                empty=env._empty,
+                tree=env._tree,
+                fire=env._fire,
+                bulldozed=env._bulldozed,
+                burned=env._burned,
+                title=env.spec.id if env.spec is not None else env.title,
+                pos_fires=env._pos_fire,
+            ),
+            "true_grid",
+        ),
+        (process_agent_obs_func, "agent_observation_grid"),
+    ]
+
     n_processes = 8
 
     # Process all frames in parallel
     # Initialize empty games list with the right number of sublists
-    games = [[] for _ in range(len(frames_per_game))]
 
     # Flatten all frames into a single list with their game indices
     flat_frames = []
@@ -259,39 +287,42 @@ def save_frames_and_plots(
         flat_frames.extend(frames)
         frame_to_game_idx.extend([game_idx] * len(frames))
 
-    if parallel:
-        chunk_size = 100
-        # processed_frames = []
-        with Pool(processes=n_processes) as pool:
-            for i in range(0, len(flat_frames), chunk_size):
-                chunk = flat_frames[i : i + chunk_size]
-                chunk_processed = list(
-                    tqdm(
-                        pool.imap(process_func, chunk),
-                        total=len(chunk),
-                        desc=f"Processing frames {i}-{i+len(chunk)}",
+    for process_func, key in process_funcs:
+        games = [[] for _ in range(len(frames_per_game))]
+        if parallel:
+            chunk_size = 300
+            with Pool(processes=n_processes) as pool:
+                for i in range(0, len(flat_frames), chunk_size):
+                    chunk = flat_frames[i : i + chunk_size]
+                    chunk_processed = list(
+                        tqdm(
+                            pool.imap(process_func, chunk),
+                            total=len(chunk),
+                            desc=f"Processing frames {i}-{i+len(chunk)}",
+                        )
                     )
+                    # Append each processed frame to its corresponding game list
+                    for frame_idx, processed_frame in enumerate(chunk_processed):
+                        game_idx = frame_to_game_idx[i + frame_idx]
+                        games[game_idx].append(processed_frame)
+        else:
+            # Process frames sequentially and organize them into games
+            for frame_idx, frame in enumerate(
+                tqdm(
+                    map(process_func, flat_frames),
+                    total=len(flat_frames),
+                    desc="Processing frames",
                 )
-                # Append each processed frame to its corresponding game list
-                for frame_idx, processed_frame in enumerate(chunk_processed):
-                    game_idx = frame_to_game_idx[i + frame_idx]
-                    games[game_idx].append(processed_frame)
-    else:
-        # Process frames sequentially and organize them into games
-        for frame_idx, frame in enumerate(
-            tqdm(
-                map(process_func, flat_frames),
-                total=len(flat_frames),
-                desc="Processing frames",
-            )
-        ):
-            game_idx = frame_to_game_idx[frame_idx]
-            games[game_idx].append(frame)
+            ):
+                game_idx = frame_to_game_idx[frame_idx]
+                games[game_idx].append(frame)
 
-    for i in range(len(games)):
-        fps = 1000 / duration_between
-        clip = mp.ImageSequenceClip([np.array(img) for img in games[i]], fps=fps)
-        clip.write_videofile(get_paths("mp4", i), fps=30, threads=1, codec="libx264")
+        for i in range(len(games)):
+            fps = 1000 / duration_between
+            clip = mp.ImageSequenceClip([np.array(img) for img in games[i]], fps=fps)
+            clip.write_videofile(
+                get_paths("mp4", i, key), fps=30, threads=1, codec="libx264"
+            )
 
 
 def generate_frames(
@@ -366,6 +397,7 @@ def generate_frames(
                         "grid": next_local_obs[1]["per_env_context"]["true_grid"][
                             game_index
                         ],
+                        "agent_observation_grid": next_local_obs[0][game_index],
                         "wind_index": next_local_obs[1]["per_env_context"][
                             "wind_index"
                         ][game_index],
@@ -440,6 +472,7 @@ def generate_frames(
                         frames_per_game[video_index].append(
                             {
                                 "grid": contexts["true_grid"][0, frame_index],
+                                "agent_observation_grid": grid_obs[0, frame_index],
                                 "is_night": contexts["is_night"][0, frame_index],
                                 "wind_index": contexts["wind_index"][0, frame_index],
                                 "time": contexts["time"][0, frame_index],
@@ -490,15 +523,32 @@ def generate_gif_envs(args: Args):
         enable_extensions=args.env.enable_extensions,
     )
     actions = [
-        1,
-        1,
-        1,
-        6,
-        6,
-        6,
-        6,
-        6,
-        6,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        7,
+        7,
+        7,
+        7,
+        7,
+        7,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        5,
+        5,
+        5,
+        5,
+        5,
+        5,
+        5,
         7,
         7,
         7,
@@ -506,12 +556,23 @@ def generate_gif_envs(args: Args):
         7,
         7,
         7,
-        7,
-        7,
-        7,
-        7,
-        7,
-        7,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
     ]
 
     def run_actions(x, y):
@@ -524,7 +585,7 @@ def generate_gif_envs(args: Args):
     else:
         actor = lambda x, y: env.total_action_space.sample()
 
-    # actor = run_actions
+    actor = run_actions
 
     generate_frames(
         env,
@@ -553,7 +614,7 @@ def parse_args():
     # PPO args
     ppo = parser.add_argument_group("PPO")
     ppo.add_argument("--learning-rate", type=float, default=2.5e-4)
-    ppo.add_argument("--anneal-lr", action="store_true")
+    ppo.add_argument("--anneal-lr", action="store_true", default=True)
     ppo.add_argument("--gamma", type=float, default=0.99)
     ppo.add_argument("--gae-lambda", type=float, default=0.95)
     # ... add other PPO args

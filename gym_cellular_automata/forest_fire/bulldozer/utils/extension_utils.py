@@ -90,7 +90,7 @@ def see_invisible_fires_fn(
 def apply_visibility(grid, per_env_context):
     """Hide fires during daytime."""
     return jnp.where(
-        (grid == 25) & (per_env_context["is_night"] == 0),
+        (grid == 3) & (per_env_context["is_night"] == 0),
         0,  # Hide fires during day
         grid,
     )
@@ -99,8 +99,8 @@ def apply_visibility(grid, per_env_context):
 @jax.jit
 def apply_blur(grid):
     """Apply uniform blur transformation."""
-    # Normalize values
-    normalized = jnp.where(grid == 0, 0.0, jnp.where(grid == 3, 0.5, 1.0))
+    # Normalize values to [0,1] range
+    normalized = grid / 4.0
 
     # Apply uniform blur
     kernel = jnp.ones((3, 3)) / 9.0
@@ -112,8 +112,8 @@ def apply_blur(grid):
                 kernel[i, j] * padded[i : i + grid.shape[0], j : j + grid.shape[1]]
             )
 
-    # Map back to original values
-    return jnp.where(blurred < 1 / 3, 0, jnp.where(blurred < 2 / 3, 3, 25))
+    # Map back to original values (round to nearest integer)
+    return jnp.round(blurred * 4).astype(jnp.int32)
 
 
 @jax.jit
@@ -129,8 +129,8 @@ def transform_grid(grid, per_env_context, skip_visibility, skip_blur):
     Returns:
         Transformed grid
     """
-    grid = jnp.where(skip_visibility, grid, apply_visibility(grid, per_env_context))
     grid = jnp.where(skip_blur, grid, apply_blur(grid))
+    grid = jnp.where(skip_visibility, grid, apply_visibility(grid, per_env_context))
     return grid
 
 
