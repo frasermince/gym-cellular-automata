@@ -34,8 +34,6 @@ from .utils.extension_utils import (
     apply_extensions,
     EXTENSION_REGISTRY,
 )
-from jax.experimental import checkify
-
 import math
 from functools import partial
 from PIL import ImageColor
@@ -406,7 +404,6 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
     def reset(self, *, seed: Optional[int] = None, options: Optional[dict] = None):
         self._resample_initial = True
         initial_grid, initial_context = self.initial_state
-        # checkified_grid_to_rgb = checkify.checkify(self.MDP.grid_to_rgb)
         rgb_grid = jax.vmap(self.MDP.grid_to_rgb, in_axes=(0, 0, 0))(
             initial_grid,
             initial_context["per_env_context"],
@@ -985,8 +982,6 @@ class MDP(Operator):
         )
         channels = jnp.stack([*channels, *extension_channels], axis=-1)
 
-        # checkified_grid_to_rgb = checkify.checkify(self.grid_to_rgb)
-        # error, rgb_grid = checkified_grid_to_rgb(channels, per_env_context, position)
         rgb_grid = self.grid_to_rgb(channels, per_env_context, position)
         return rgb_grid, channels
 
@@ -1052,18 +1047,6 @@ class MDP(Operator):
             is_night[..., None], night_colors["position"], day_colors["position"]
         )
         rgb_grid = rgb_grid.at[position[..., 0], position[..., 1]].set(position_color)
-        # Assert that the grid is never completely empty
-        # Count non-empty cells (anything that's not the empty color)
-        # non_empty_mask = ~jnp.all(
-        #     rgb_grid
-        #     == jnp.where(
-        #         is_night[..., None], night_colors["empty"], day_colors["empty"]
-        #     ),
-        #     axis=-1,
-        # )
-
-        # Assert at least one cell is non-empty
-        # checkify.check(jnp.sum(non_empty_mask) >= 1, "Grid cannot be completely empty")
 
         return rgb_grid
 

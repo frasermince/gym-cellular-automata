@@ -21,7 +21,6 @@ from jax.experimental import host_callback
 import math
 from gym_cellular_automata.agents.args import Args
 from functools import partial
-from jax.experimental import checkify
 
 
 def policy_printer(args):
@@ -930,14 +929,6 @@ def run_rollout_loop(
             new_recording_contexts["time"] = (
                 recording_contexts["time"].at[step].set(obs[1]["time"])
             )
-            # storage = storage.replace(
-            # grid_obs=storage.grid_obs.at[step].set(next_grid_obs),
-            # position_obs=storage.position_obs.at[step].set(next_position_obs),
-            # dones=storage.dones.at[step].set(next_done),
-            # actions=storage.actions.at[step].set(actions),
-            # logprobs=storage.logprobs.at[step].set(logprobs),
-            # values=storage.values.at[step].set(value.squeeze()),
-            # contexts=new_contexts,
         storage = Storage(
             grid_obs=obs[0],
             position_obs=obs[1]["position"],
@@ -1031,7 +1022,6 @@ def run_rollout_loop(
     )
     storage_returns = []
     action_count = [0 for i in range(9)]
-    checkified_rollout = checkify.checkify(rollout)
     with orbax.checkpoint.CheckpointManager(
         "/tmp/flax_ckpt/orbax/managed",
         options=checkpoint_options,
