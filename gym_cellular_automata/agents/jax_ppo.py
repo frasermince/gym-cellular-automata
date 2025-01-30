@@ -140,7 +140,7 @@ class Network(nn.Module):
         x = nn.relu(x)
         x = x.reshape((x.shape[0], -1))
 
-        x = nn.Dense(512, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
+        x = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
             x
         )
         x = nn.relu(x)
