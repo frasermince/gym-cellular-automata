@@ -100,7 +100,7 @@ def apply_visibility(grid, per_env_context):
 def apply_blur(grid):
     """Apply uniform blur transformation."""
     # Normalize values to [0,1] range
-    normalized = grid / 4.0
+    normalized = grid / 3.0
 
     # Apply uniform blur
     kernel = jnp.ones((3, 3)) / 9.0
@@ -113,7 +113,7 @@ def apply_blur(grid):
             )
 
     # Map back to original values (round to nearest integer)
-    return jnp.round(blurred * 4).astype(jnp.int32)
+    return jnp.round(blurred * 3).astype(jnp.int32)
 
 
 @jax.jit

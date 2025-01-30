@@ -70,7 +70,7 @@ jax.config.update("jax_platform_name", DEFAULT_PLATFORM)
 
 
 @gif.frame
-def process_single_frame(args, empty, tree, fire, bulldozed, burned, title, pos_fires):
+def process_single_frame(args, empty, tree, fire, title, pos_fires):
     """Helper function that applies the decorator inside the process"""
 
     grid = args["grid"]
@@ -82,20 +82,20 @@ def process_single_frame(args, empty, tree, fire, bulldozed, burned, title, pos_
     cell_count = args["cell_count"]
     is_night = args["is_night"]
     pos_fire = pos_fires[game_idx]
+    dousing_count = args["dousing_count"][game_idx]
 
     # return make_frame_local(env, grid, time_per_frame, position, pos_fire, wind_index)
     plot = render(
         empty,
         tree,
         fire,
-        bulldozed,
-        burned,
         title,
         grid,
         time_per_frame,
         position,
         cell_count,
         pos_fire,
+        dousing_count,
         wind_index,
         is_night,
     )
@@ -113,10 +113,10 @@ def get_run(env: Env, actor):
     warnings.filterwarnings("ignore", category=MatplotlibDeprecationWarning)
 
     # @gif.frame
-    def run(obs, info, episode_stats, past_obs):
+    def run(obs, info, episode_stats, past_obs, iteration):
         # if save_gif:
         #     env.render()
-        action = actor(obs[0], obs[1]["position"])
+        action = actor(obs[0], obs[1]["position"], iteration)
         print("Action", action)
 
         step_tuple = env.stateless_step(action, obs, info)
@@ -160,10 +160,10 @@ def get_run(env: Env, actor):
         )
 
         new_episode_return = episode_stats.episode_returns + next_info["reward"]
-        # if jnp.any(next_info["terminated"]):
-        #     import pdb
+        if jnp.any(next_info["terminated"]):
+            import pdb
 
-        #     pdb.set_trace()
+            pdb.set_trace()
         step_tuple = env.conditional_reset(step_tuple, action)
 
         if next_done.any():
@@ -187,7 +187,7 @@ def process_agent_obs_func(x):
     rgb_array = np.array(x["agent_observation_grid"])
     pil_image = Image.fromarray(np.uint8(rgb_array))
     width, height = pil_image.size
-    resized_image = pil_image.resize((width * 64, height * 64))
+    resized_image = pil_image.resize((width * 8, height * 8))
     return resized_image
 
 
@@ -259,19 +259,18 @@ def save_frames_and_plots(
             vegetation_plots[i].close()
 
     process_funcs = [
-        (
-            partial(
-                process_single_frame,
-                empty=env._empty,
-                tree=env._tree,
-                fire=env._fire,
-                bulldozed=env._bulldozed,
-                burned=env._burned,
-                title=env.spec.id if env.spec is not None else env.title,
-                pos_fires=env._pos_fire,
-            ),
-            "true_grid",
-        ),
+        # (
+        #     partial(
+        #         process_single_frame,
+        #         empty=env._empty,
+        #         tree=env._tree,
+        #         fire=env._fire,
+        #         title=env.spec.id if env.spec is not None else env.title,
+        #         pos_fires=env._pos_fire,
+        #     ),
+        #     "true_grid",
+        # ),
+        (process_agent_obs_func, "true_grid"),
         (process_agent_obs_func, "agent_observation_grid"),
     ]
 
@@ -371,7 +370,7 @@ def generate_frames(
             (
                 (next_local_obs, reward, next_done, truncated, next_info),
                 episode_stats,
-            ) = run(next_local_obs, next_info, episode_stats, past_obs)
+            ) = run(next_local_obs, next_info, episode_stats, past_obs, frame_index)
 
             swap_obs = current_obs
             current_obs = next_local_obs
@@ -394,9 +393,13 @@ def generate_frames(
             for game_index in range(next_local_obs[0].shape[0]):
                 frames_per_game[game_index].append(
                     {
-                        "grid": next_local_obs[1]["per_env_context"]["true_grid"][
-                            game_index
-                        ],
+                        "grid": env.MDP.grid_to_rgb(
+                            next_local_obs[1]["per_env_context"]["true_grid"][
+                                game_index
+                            ],
+                            next_local_obs[1]["per_env_context"],
+                            next_local_obs[1]["position"][game_index],
+                        ),
                         "agent_observation_grid": next_local_obs[0][game_index],
                         "wind_index": next_local_obs[1]["per_env_context"][
                             "wind_index"
@@ -404,6 +407,9 @@ def generate_frames(
                         "is_night": next_local_obs[1]["per_env_context"]["is_night"][
                             game_index
                         ],
+                        "dousing_count": next_local_obs[1]["per_env_context"][
+                            "dousing_count"
+                        ][game_index],
                         "time": next_local_obs[1]["time"][game_index],
                         "position": next_local_obs[1]["position"][game_index],
                         "frame_index": frame_index,
@@ -474,6 +480,9 @@ def generate_frames(
                                 "grid": contexts["true_grid"][0, frame_index],
                                 "agent_observation_grid": grid_obs[0, frame_index],
                                 "is_night": contexts["is_night"][0, frame_index],
+                                "dousing_count": contexts["dousing_count"][
+                                    0, frame_index
+                                ],
                                 "wind_index": contexts["wind_index"][0, frame_index],
                                 "time": contexts["time"][0, frame_index],
                                 "position": tuple(
@@ -574,16 +583,44 @@ def generate_gif_envs(args: Args):
         4,
         4,
     ]
+    # actions_200 = [(3, 96), (7, 112), (3, 100), (5, 85), (7, 112), (4, 256)]
+    actions_200 = [(3, 104), (7, 110), (3, 32), (7, 32), (5, 32), (1, 32)]
+    actions_100 = [
+        (3, 52),
+        (7, 55),
+        (3, 16),
+        (7, 16),
+        (5, 16),
+        (1, 16),
+        (5, 1),
+        (1, 1),
+        (4, 1),
+        (3, 18),
+        (7, 18),
+        (5, 18),
+        (1, 18),
+    ]
+    # actions_100 = [(3, 10), (5, 8), (3, 6)]
 
-    def run_actions(x, y):
-        action = actions.pop(0)
-        actions.append(action)
-        return jnp.array([[action, 1, 0]])
+    def run_actions(x, y, iteration):
+        if len(actions_100) == 0:
+            return jnp.array([[4, 0, 0]])
+        (action, count) = actions_100[0]
+        count -= 1
+        if count == 0:
+            actions_100.pop(0)
+        else:
+            actions_100[0] = (action, count)
+
+        if iteration % 2 == 0:
+            return jnp.array([[action, 1, 0]])
+        else:
+            return jnp.array([[action, 0, 0]])
 
     if args.exp.params_path:
-        actor = load_actor(args.exp.params_path, env)
+        actor = lambda x, y, iteration: load_actor(args.exp.params_path, env)
     else:
-        actor = lambda x, y: env.total_action_space.sample()
+        actor = lambda x, y, iteration: env.total_action_space.sample()
 
     actor = run_actions
 

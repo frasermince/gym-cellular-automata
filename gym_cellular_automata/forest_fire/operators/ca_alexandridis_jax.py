@@ -43,14 +43,12 @@ class PartiallyObservableForestFireJax(Operator):
 
     deterministic = False
 
-    def __init__(self, empty, tree, fire, bulldozed, burned, *args, **kwargs):
+    def __init__(self, empty, tree, fire, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
         self.empty = empty
         self.tree = tree
         self.fire = fire
-        self.bulldozed = bulldozed
-        self.burned = burned
         if self.context_space is None:
             self.context_space = spaces.Box(0.0, 1.0, shape=(2,), dtype=TYPE_BOX)
 
@@ -58,7 +56,7 @@ class PartiallyObservableForestFireJax(Operator):
 
     @partial(jit, static_argnums=(0,))
     def _compute_burn_probability(
-        self, vegetation, density, wind, slope, bulldozed_counts
+        self, vegetation, density, wind, slope, dousing_fire_retardant, heat
     ):
         """Vectorized computation of burn probabilities"""
         # Convert discrete values to probabilities using JAX's type-safe operations
@@ -80,7 +78,7 @@ class PartiallyObservableForestFireJax(Operator):
 
         # Vectorize the lookup
 
-        p_h = 0.25 - 0.0001 * bulldozed_counts
+        p_h = heat - dousing_fire_retardant
         a = 0.078
         p_slope = jnp.exp(a * slope)
 
@@ -210,9 +208,7 @@ class PartiallyObservableForestFireJax(Operator):
         # Create masks for different cell states
         tree_mask = grid == self.tree
         fire_mask = grid == self.fire
-        empty_mask = (
-            (grid == self.empty) | (grid == self.bulldozed) | (grid == self.burned)
-        )
+        empty_mask = grid == self.empty
 
         # Get neighborhoods for all cells
 
@@ -222,9 +218,39 @@ class PartiallyObservableForestFireJax(Operator):
         neighborhoods = vmap(
             vmap(moore_n, in_axes=(None, 0, None)), in_axes=(None, 0, None)
         )(1, (rows, cols), grid)
-        # Count bulldozed cells in each 3x3 neighborhood
-        bulldozed_neighborhoods = neighborhoods == self.bulldozed
-        bulldozed_counts = bulldozed_neighborhoods.sum(axis=(-1, -2))
+        larger_neighborhoods = vmap(
+            vmap(moore_n, in_axes=(None, 0, None)), in_axes=(None, 0, None)
+        )(2, (rows, cols), grid)
+        dousing_neighborhoods = vmap(
+            vmap(moore_n, in_axes=(None, 0, None)), in_axes=(None, 0, None)
+        )(2, (rows, cols), per_env_context["dousing_count"])
+
+        # Count bulldozed cells in each 5x5 neighborhood
+        dousing_weights = jnp.array(
+            [
+                [0.05, 0.05, 0.05, 0.05, 0.05],
+                [0.05, 0.15, 0.15, 0.15, 0.05],
+                [0.05, 0.15, 0.15, 0.15, 0.05],
+                [0.05, 0.15, 0.15, 0.15, 0.05],
+                [0.05, 0.05, 0.05, 0.05, 0.05],
+            ]
+        )
+        dousing_weights = dousing_weights[None, None, ...]
+        heat_weights = jnp.array(
+            [
+                [0.02, 0.02, 0.02, 0.02, 0.02],
+                [0.02, 0.08, 0.08, 0.08, 0.02],
+                [0.02, 0.08, 0.08, 0.08, 0.02],
+                [0.02, 0.08, 0.08, 0.08, 0.02],
+                [0.02, 0.02, 0.02, 0.02, 0.02],
+            ]
+        )
+        heat_weights = heat_weights[None, None, ...]
+        dousing_neighborhoods = dousing_neighborhoods * dousing_weights
+        dousing_fire_retardant = dousing_neighborhoods.sum(axis=(-1, -2))
+
+        heat_neighborhoods = (larger_neighborhoods == self.fire) * heat_weights
+        heat = heat_neighborhoods.sum(axis=(-1, -2))
 
         # Handle direct fire spread
         key, subkey = random.split(key)
@@ -233,7 +259,8 @@ class PartiallyObservableForestFireJax(Operator):
             per_env_context["density"],
             wind_matrix,
             per_env_context["slope"],
-            bulldozed_counts,
+            dousing_fire_retardant,
+            heat,
         )
 
         random_values_burn = random.uniform(subkey, burn_probs.shape)
@@ -242,7 +269,7 @@ class PartiallyObservableForestFireJax(Operator):
 
         # Generate random fire ages (3-5) for new fires
         key, fire_age_key = random.split(key)
-        new_fire_ages = random.randint(fire_age_key, grid.shape, 10, 15)
+        new_fire_ages = random.randint(fire_age_key, grid.shape, 8, 15)
 
         # Sets to fire if the following:
         # - If the cell is a tree

@@ -75,7 +75,7 @@ class Network(nn.Module):
             x = nn.Conv(
                 32,
                 kernel_size=(4, 4),
-                strides=(3, 3),  # Reduced stride
+                strides=(2, 2),  # Reduced stride
                 padding="VALID",
                 kernel_init=orthogonal(np.sqrt(2)),
                 bias_init=constant(0.0),
@@ -84,6 +84,16 @@ class Network(nn.Module):
             x = nn.Conv(
                 64,
                 kernel_size=(3, 3),
+                strides=(1, 1),  # Reduced stride
+                padding="VALID",
+                kernel_init=orthogonal(np.sqrt(2)),
+                bias_init=constant(0.0),
+            )(x)
+
+            x = nn.relu(x)
+            x = nn.Conv(
+                64,
+                kernel_size=(2, 2),
                 strides=(1, 1),  # Reduced stride
                 padding="VALID",
                 kernel_init=orthogonal(np.sqrt(2)),
@@ -101,6 +111,15 @@ class Network(nn.Module):
             x = nn.relu(x)
             x = nn.Conv(
                 64,
+                kernel_size=(8, 8),
+                strides=(4, 4),
+                padding="VALID",
+                kernel_init=orthogonal(np.sqrt(2)),
+                bias_init=constant(0.0),
+            )(x)
+            x = nn.relu(x)
+            x = nn.Conv(
+                64,
                 kernel_size=(4, 4),
                 strides=(2, 2),
                 padding="VALID",
@@ -108,6 +127,7 @@ class Network(nn.Module):
                 bias_init=constant(0.0),
             )(x)
             x = nn.relu(x)
+
             x = nn.Conv(
                 64,
                 kernel_size=(3, 3),

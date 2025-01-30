@@ -1,6 +1,8 @@
 from typing import Dict, Set
 
+import jax
 import jax.numpy as jnp
+
 from gymnasium import logger, spaces
 
 from gym_cellular_automata.operator import Operator
@@ -60,6 +62,26 @@ class MoveJax(Operator):
         return grid, get_new_position(context)
 
 
+def debug_printer(args):
+    [
+        previous,
+        current,
+    ] = args
+    print(f"Previous Dousing: {previous}")
+    print(f"Current Dousing: {current}")
+    import pdb
+
+    pdb.set_trace()
+
+
+def debug_action_printer(args):
+    [action] = args
+    print(f"Action: {action}")
+    import pdb
+
+    pdb.set_trace()
+
+
 class ModifyJax(Operator):
     hit = False
 
@@ -77,25 +99,21 @@ class ModifyJax(Operator):
         self.effect_keys = jnp.array(list(effects.keys()))
         self.effect_values = jnp.array(list(effects.values()))
 
-    def update(self, grid, action, context):
-        self.hit = False
-
+    def update(self, grid, action, context, per_env_context):
         row, col = context
-
-        cell_value = grid[row, col]
-
-        matches = cell_value == self.effect_keys
-        new_value = jnp.sum(matches * self.effect_values)
-
-        # Only modify if action is True and we have an effect
-        has_effect = jnp.any(matches)
-        should_modify = action & has_effect
-
-        grid = grid.at[row, col].set(
-            jnp.where(should_modify, new_value, cell_value).reshape(())
+        previous = per_env_context["dousing_count"]
+        per_env_context["dousing_count"] = jnp.where(
+            action == 1,
+            per_env_context["dousing_count"]
+            .at[row, col]
+            .set(per_env_context["dousing_count"][row, col] + 1),
+            per_env_context["dousing_count"],
         )
 
-        return grid, context
+        # jax.debug.callback(debug_action_printer, (action,))
+        # jax.debug.callback(debug_printer, (previous, per_env_context["dousing_count"]))
+
+        return grid, context, per_env_context
 
 
 class MoveModifyJax(Operator):
@@ -129,11 +147,13 @@ class MoveModifyJax(Operator):
                 assert self.move.context_space == self.modify.context_space
                 self.context_space = self.move.context_space
 
-    def update(self, grid, subactions, position):
+    def update(self, grid, subactions, position, per_env_context):
         move_action = subactions[0]
         modify_action = subactions[1]
 
         grid, position = self.move(grid, move_action, position)
-        grid, position = self.modify(grid, modify_action, position)
+        grid, position, per_env_context = self.modify(
+            grid, modify_action, position, per_env_context
+        )
 
-        return grid, position
+        return grid, position, per_env_context

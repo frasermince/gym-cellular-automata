@@ -41,13 +41,13 @@ from PIL import ImageColor
 COLOR_EMPTY_DAY = "#DDD1D3"  # Gray
 COLOR_TREE_DAY = "#A9C499"  # Green
 COLOR_FIRE_DAY = "#E68181"  # Salmon-Red
-COLOR_POSITION_DAY = "#0000FF"  # Blue
+COLOR_POSITION_DAY = "#000000"  # Black (changed from blue)
 
 # Night colors
 COLOR_EMPTY_NIGHT = "#696969"  # Darker Gray
 COLOR_TREE_NIGHT = "#2F4F4F"  # Dark Green
 COLOR_FIRE_NIGHT = "#8B0000"  # Dark Red
-COLOR_POSITION_NIGHT = "#0000FF"  # Blue
+COLOR_POSITION_NIGHT = "#000000"  # Black (changed from blue)
 
 COLOR_EMPTY_DAY_RGB = ImageColor.getcolor(COLOR_EMPTY_DAY, "RGB")
 COLOR_TREE_DAY_RGB = ImageColor.getcolor(COLOR_TREE_DAY, "RGB")
@@ -123,6 +123,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             "is_night",
             "true_grid",
             "time_step",
+            "dousing_count",
         }
 
         self.extension_map = [
@@ -136,9 +137,6 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         self._reward_per_tree = 1
         self._reward_per_empty = 0
         self._reward_per_fire = -1
-        self._reward_per_bulldozed = 0
-        self._reward_per_burned = 0
-        self._reward_per_burned = 0
 
         self.num_envs = num_envs
         self.title = "ForestFireBulldozer" + str(nrows) + "x" + str(ncols)
@@ -163,9 +161,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
 
         self._empty = 0  # Empty cell
         self._tree = 1  # Tree cell
-        self._bulldozed = 2  # Bulldozed cell
-        self._fire = 3  # Fire cell
-        self._burned = 4  # Burned cell
+        self._fire = 2  # Fire cell
 
         # Initial Condition Parameters
 
@@ -211,8 +207,9 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         self._p_wind_change = 0.06
 
         self._effects = {
-            # self._fire: self._bulldozed,
-            self._tree: self._empty,
+            # self._fire: self._doused,
+            # self._empty: self._doused,
+            # self._tree: self._doused,
         }  # Substitution Effect
 
         # Time to do things
@@ -277,8 +274,6 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             self._empty,
             self._tree,
             self._fire,
-            self._bulldozed,
-            self._burned,
             **self.ca_space,
         )
 
@@ -299,8 +294,6 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             enable_extensions,
             self._tree,
             self._fire,
-            self._bulldozed,
-            self._burned,
             self._empty,
             **self.MDP_space,
         )
@@ -404,7 +397,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
     def reset(self, *, seed: Optional[int] = None, options: Optional[dict] = None):
         self._resample_initial = True
         initial_grid, initial_context = self.initial_state
-        rgb_grid = jax.vmap(self.MDP.grid_to_rgb, in_axes=(0, 0, 0))(
+        rgb_grid = jax.vmap(self.MDP.grid_to_rgb_with_extensions, in_axes=(0, 0, 0))(
             initial_grid,
             initial_context["per_env_context"],
             initial_context["position"],
@@ -576,8 +569,6 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
                 dict_counts[self._empty],
                 dict_counts[self._tree],
                 dict_counts[self._fire],
-                dict_counts[self._bulldozed],
-                dict_counts[self._burned],
             ]
         )
 
@@ -588,8 +579,6 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
                 self._reward_per_empty,
                 self._reward_per_tree,
                 self._reward_per_fire,
-                self._reward_per_bulldozed,
-                self._reward_per_burned,
             ]
         )
         return (jnp.dot(reward_weights, cell_counts_relative) - 1) / 2
@@ -631,22 +620,25 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             if self.middle_fire:
                 self._pos_fire = []
                 for _ in range(self.num_envs):
-                    r = (self.nrows // 2) + self._noise(self.nrows)
-                    c = (self.ncols // 2) + self._noise(self.ncols)
-                    self._pos_fire.append((r, c))
-
+                    r = self.nrows // 2  # + self._noise(self.nrows)
+                    c = self.ncols // 2  # + self._noise(self.ncols)
+                    self._pos_fire.append(
+                        [(r, c), (r, c - 1), (r - 1, c), (r - 1, c - 1)]
+                    )
             else:
                 self._pos_fire = []
                 for _ in range(self.num_envs):
-                    r = (3 * self.nrows // 4) + self._noise(self.nrows)
-                    c = (1 * self.ncols // 4) + self._noise(self.ncols)
-                    self._pos_fire.append((r, c))
+                    r = 3 * self.nrows // 4  # + self._noise(self.nrows)
+                    c = 1 * self.ncols // 4  # + self._noise(self.ncols)
+                    self._pos_fire.append(
+                        [(r, c), (r, c - 1), (r - 1, c), (r - 1, c - 1)]
+                    )
 
         fire_age = self._fire_age
         for env in range(self.num_envs):
-            r, c = self._pos_fire[env]
-            grid = grid.at[env, r, c].set(self._fire)
-            fire_age = fire_age.at[env, r, c].set(10)
+            for r, c in self._pos_fire[env]:
+                grid = grid.at[env, r, c].set(self._fire)
+                fire_age = fire_age.at[env, r, c].set(10)
 
         return jnp.array(grid), fire_age
 
@@ -684,6 +676,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             "is_night": jnp.zeros(self.num_envs, dtype=jnp.int32),
             "true_grid": grid[..., 0],
             "time_step": jnp.ones(self.num_envs, dtype=jnp.int32),
+            "dousing_count": jnp.zeros_like(grid[..., 0], dtype=jnp.int32),
         }
 
         # Shared context parameters
@@ -910,8 +903,6 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             self._empty: jnp.sum(grid == self._empty),
             self._tree: jnp.sum(grid == self._tree),
             self._fire: jnp.sum(grid == self._fire),
-            self._bulldozed: jnp.sum(grid == self._bulldozed),
-            self._burned: jnp.sum(grid == self._burned),
         }
 
         return counts
@@ -932,8 +923,6 @@ class MDP(Operator):
         enable_extensions,
         tree,
         fire,
-        bulldozed,
-        burned,
         empty,
         *args,
         **kwargs,
@@ -947,8 +936,6 @@ class MDP(Operator):
         self.suboperators = self.repeat_ca, self.move_modify
         self.tree = tree
         self.fire = fire
-        self.bulldozed = bulldozed
-        self.burned = burned
         self.empty = empty
 
     # Gym API
@@ -982,15 +969,14 @@ class MDP(Operator):
         )
         channels = jnp.stack([*channels, *extension_channels], axis=-1)
 
-        rgb_grid = self.grid_to_rgb(channels, per_env_context, position)
+        rgb_grid = self.grid_to_rgb_with_extensions(channels, per_env_context, position)
         return rgb_grid, channels
 
     @partial(jax.jit, static_argnums=(0))
-    def grid_to_rgb(self, extended_grid, per_env_context, position):
+    def grid_to_rgb_with_extensions(self, extended_grid, per_env_context, position):
         """Convert extended grid to RGB representation."""
         # Extract channels
         base_grid = extended_grid[..., 0]  # First channel is base grid
-        is_night = per_env_context["is_night"]
         extensions = extended_grid[..., 3:]  # Extension channels
 
         # Check each extension and use first available one
@@ -999,24 +985,27 @@ class MDP(Operator):
         display_grid = jnp.where(
             jnp.any(has_extension), extensions[..., first_valid], base_grid
         )
+        return self.grid_to_rgb(display_grid, per_env_context, position)
+
+    def grid_to_rgb(self, display_grid, per_env_context, position):
+        is_night = per_env_context["is_night"]
+        dousing_count = per_env_context["dousing_count"]
 
         # Define RGB colors (normalized to [0,1])
         # Day colors
         day_colors = {
-            "empty": jnp.array(COLOR_EMPTY_DAY_RGB),  # White
-            "tree": jnp.array(COLOR_TREE_DAY_RGB),  # Bright green
-            "fire": jnp.array(COLOR_FIRE_DAY_RGB),  # Bright red
-            "position": jnp.array(COLOR_POSITION_DAY_RGB),  # Blue for bulldozer
+            "empty": jnp.array(COLOR_EMPTY_DAY_RGB),
+            "tree": jnp.array(COLOR_TREE_DAY_RGB),
+            "fire": jnp.array(COLOR_FIRE_DAY_RGB),
+            "position": jnp.array(COLOR_POSITION_DAY_RGB),
         }
 
-        # Night colors (darker versions)
+        # Night colors
         night_colors = {
-            "empty": jnp.array(COLOR_EMPTY_NIGHT_RGB),  # Dark blue-grey
-            "tree": jnp.array(COLOR_TREE_NIGHT_RGB),  # Dark green
-            "fire": jnp.array(COLOR_FIRE_NIGHT_RGB),  # Darker red
-            "position": jnp.array(
-                COLOR_POSITION_NIGHT_RGB
-            ),  # Darker blue for bulldozer
+            "empty": jnp.array(COLOR_EMPTY_NIGHT_RGB),
+            "tree": jnp.array(COLOR_TREE_NIGHT_RGB),
+            "fire": jnp.array(COLOR_FIRE_NIGHT_RGB),
+            "position": jnp.array(COLOR_POSITION_NIGHT_RGB),
         }
 
         # Initialize with empty color
@@ -1042,6 +1031,22 @@ class MDP(Operator):
             rgb_grid,
         )
 
+        # Apply water effect to doused cells
+        # Scale the effect based on dousing count (max effect at count=3)
+        dousing_strength = jnp.minimum(dousing_count, 3) / 4.0
+        water_tint = jnp.where(
+            is_night[..., None], jnp.array([255, 165, 0]), jnp.array([0, 0, 200])
+        )  # Orange at night, blue during day
+
+        # Blend the water tint with the base colors
+        dousing_mask = (dousing_count > 0)[..., None]
+        rgb_grid = jnp.where(
+            dousing_mask,
+            rgb_grid * (1 - dousing_strength[..., None])
+            + water_tint * dousing_strength[..., None],
+            rgb_grid,
+        )
+
         # Blend position on top
         position_color = jnp.where(
             is_night[..., None], night_colors["position"], day_colors["position"]
@@ -1058,7 +1063,9 @@ class MDP(Operator):
             grid, basic_action, per_env_context, shared_context, time
         )
 
-        grid, position = self.move_modify(grid, basic_action, position)
+        grid, position, next_per_env_context = self.move_modify(
+            grid, basic_action, position, next_per_env_context
+        )
 
         # Store true grid state
         next_per_env_context["true_grid"] = grid
