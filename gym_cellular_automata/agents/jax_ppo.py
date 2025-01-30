@@ -111,15 +111,6 @@ class Network(nn.Module):
             x = nn.relu(x)
             x = nn.Conv(
                 64,
-                kernel_size=(8, 8),
-                strides=(4, 4),
-                padding="VALID",
-                kernel_init=orthogonal(np.sqrt(2)),
-                bias_init=constant(0.0),
-            )(x)
-            x = nn.relu(x)
-            x = nn.Conv(
-                64,
                 kernel_size=(4, 4),
                 strides=(2, 2),
                 padding="VALID",
@@ -140,7 +131,7 @@ class Network(nn.Module):
         x = nn.relu(x)
         x = x.reshape((x.shape[0], -1))
 
-        x = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
+        x = nn.Dense(256, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
             x
         )
         x = nn.relu(x)
