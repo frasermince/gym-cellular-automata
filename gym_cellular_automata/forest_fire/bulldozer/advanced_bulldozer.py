@@ -135,7 +135,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             "zoom",
         ]
         self._reward_per_tree = 1
-        self._reward_per_empty = 0
+        self._reward_per_empty = -1
         self._reward_per_fire = -1
 
         self.num_envs = num_envs
@@ -685,7 +685,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             "p_fire": jnp.array(self._p_fire, dtype=jnp.float32),
             "p_tree": jnp.array(self._p_tree, dtype=jnp.float32),
             "p_wind_change": jnp.array(self._p_wind_change, dtype=jnp.float32),
-            "day_length": 100,
+            "day_length": 400,
         }
 
         init_context = {

@@ -23,13 +23,15 @@ from gym_cellular_automata.agents.args import Args
 from functools import partial
 
 
-def policy_printer(args):
-    policy_loss = args[0]
-    if policy_loss == 0.00:
-        import pdb
+def value_printer(args):
+    new_value = args[0]
+    mb_returns = args[1]
 
-        pdb.set_trace()
-    print(f"Policy Loss: {policy_loss:.2f}")
+    print(f"New Value: {new_value}")
+    print(f"MB Returns: {mb_returns}")
+    import pdb
+
+    pdb.set_trace()
 
 
 def debug_printer(args):
@@ -131,7 +133,7 @@ class Network(nn.Module):
         x = nn.relu(x)
         x = x.reshape((x.shape[0], -1))
 
-        x = nn.Dense(256, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
+        x = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
             x
         )
         x = nn.relu(x)
@@ -141,6 +143,14 @@ class Network(nn.Module):
 class Critic(nn.Module):
     @nn.compact
     def __call__(self, x):
+        x = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
+            x
+        )
+        x = nn.relu(x)
+        # x = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
+        #     x
+        # )
+        # x = nn.relu(x)
         return nn.Dense(1, kernel_init=orthogonal(1), bias_init=constant(0.0))(x)
 
 
@@ -160,7 +170,16 @@ class Actor(nn.Module):
         #     64, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0)
         # )(features)
         # features = nn.relu(features)
-        features = x
+
+        # x = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
+        #     x
+        # )
+        # x = nn.relu(x)
+
+        # x = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
+        #     x
+        # )
+        # x = nn.relu(x)
 
         # Create logits for each action dimension
         logits = []
@@ -168,7 +187,7 @@ class Actor(nn.Module):
         # Handle regular categorical actions
         for dim in self.action_dims:
             head = nn.Dense(dim, kernel_init=orthogonal(0.01), bias_init=constant(0.0))(
-                features
+                x
             )
             logits.append(head)
 
@@ -181,7 +200,7 @@ class Actor(nn.Module):
                     num_combinations,
                     kernel_init=orthogonal(0.01),
                     bias_init=constant(0.0),
-                )(features)
+                )(x)
                 logits.append(head)
 
         return logits
@@ -797,6 +816,17 @@ def run_rollout_loop(
         # Take mean across both batch and action dimensions
         pg_loss = jnp.maximum(pg_loss1, pg_loss2).mean()
 
+        # jax.debug.callback(
+        #     value_printer,
+        #     (
+        #         jnp.array(
+        #             [
+        #                 newvalue,
+        #                 mb_returns,
+        #             ]
+        #         )
+        #     ),
+        # )
         # Value loss
         if args.ppo.clip_vloss:
             v_loss_unclipped = 0.5 * ((newvalue - mb_returns) ** 2).mean()
