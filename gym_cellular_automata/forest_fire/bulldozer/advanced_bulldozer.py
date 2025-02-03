@@ -328,6 +328,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
     @partial(jax.jit, static_argnums=0)
     def stateless_step(self, action, obs, info):
         # MDP Transition
+
         grid, context = obs
 
         true_grid = context["per_env_context"]["true_grid"]
@@ -361,6 +362,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             context["position"],
             context["time"],
         )
+
         per_env_portion, next_position, next_time = updated_context
         context["per_env_context"] = per_env_portion
         context["position"] = next_position
@@ -373,9 +375,8 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
 
         # Gym API Formatting
         obs = next_state
-        reward = jax.vmap(self._award, in_axes=(0, 0, 0))(
-            true_grid, next_true_grid, per_env_context
-        )
+        reward = jax.vmap(self._award, in_axes=(0,))(next_true_grid)
+
         terminated = next_done
         truncated = jnp.full(next_true_grid.shape[0], False)
         info["reward"] = reward
@@ -428,9 +429,12 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         def reset_fn(args):
             step_tuple, (initial_grid, initial_context) = args
             obs, reward, terminated, truncated, info = step_tuple
-            grid, context = obs
+            rgb_grid, context = obs
+            true_grid = context["per_env_context"]["true_grid"]
             grid_obs_only = jnp.where(
-                terminated[:, None, None], initial_grid[:, :, :, 0], grid[:, :, :, 0]
+                terminated[:, None, None],
+                initial_grid[:, :, :, 0],
+                true_grid,
             )
             context["position"] = jnp.where(
                 terminated[:, None],
@@ -471,7 +475,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             )(
                 terminated,
                 grid_obs_only,
-                grid,
+                rgb_grid,
                 context["position"],
                 full_actions,
                 per_env_context,
@@ -490,12 +494,14 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
                         context["per_env_context"][key],
                     )
 
+            context["per_env_context"]["true_grid"] = grid_obs_only
+
             obs = (next_grid, context)
             info["steps_elapsed"] = jnp.where(terminated, 0, info["steps_elapsed"])
             info["reward_accumulated"] = jnp.where(
                 terminated, 0.0, info["reward_accumulated"]
             )
-
+            reward = jax.vmap(self._award, in_axes=(0,))(grid_obs_only)
             new_terminated = jnp.zeros_like(terminated, dtype=bool)
 
             return obs, reward, new_terminated, truncated, info
@@ -559,7 +565,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
     #     raw_reward = 1 + base_reward - time_penalty
     #     return jnp.tanh(raw_reward)
 
-    def _award(self, prev_grid, grid, per_env_context):
+    def _award(self, grid):
         ncells = grid.shape[0] * grid.shape[1]
 
         dict_counts = self.count_cells(grid)
@@ -638,7 +644,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         for env in range(self.num_envs):
             for r, c in self._pos_fire[env]:
                 grid = grid.at[env, r, c].set(self._fire)
-                fire_age = fire_age.at[env, r, c].set(10)
+                fire_age = fire_age.at[env, r, c].set(35)
 
         return jnp.array(grid), fire_age
 
@@ -1057,6 +1063,7 @@ class MDP(Operator):
 
     def update(self, grid, action, per_env_context, shared_context, position, time):
         # Combine per-environment and shared context parameters
+
         basic_action = (action[0], action[1])
 
         grid, (next_per_env_context, next_time) = self.repeat_ca(

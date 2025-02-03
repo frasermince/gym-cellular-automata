@@ -143,10 +143,10 @@ class Network(nn.Module):
 class Critic(nn.Module):
     @nn.compact
     def __call__(self, x):
-        x = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
-            x
-        )
-        x = nn.relu(x)
+        # x = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
+        #     x
+        # )
+        # x = nn.relu(x)
         # x = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
         #     x
         # )
@@ -309,6 +309,8 @@ def run_rollout_loop(
         "|param|value|\n|-|-|\n%s"
         % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
     )
+
+    writer.add_text("experiment_description", args.exp.description)
 
     # TRY NOT TO MODIFY: seeding
     random.seed(args.exp.seed)
@@ -565,6 +567,15 @@ def run_rollout_loop(
             grid_sample,
         ),
     )
+    writer.add_scalar(
+        "charts/network_params", sum(x.size for x in jax.tree_leaves(network_params)), 0
+    )
+    writer.add_scalar(
+        "charts/actor_params", sum(x.size for x in jax.tree_leaves(actor_params)), 0
+    )
+    writer.add_scalar(
+        "charts/critic_params", sum(x.size for x in jax.tree_leaves(critic_params)), 0
+    )
     print(
         sum(x.size for x in jax.tree_leaves(network_params)),
         sum(x.size for x in jax.tree_leaves(actor_params)),
@@ -670,22 +681,6 @@ def run_rollout_loop(
         recording_contexts["time"] = jax.device_put(
             jnp.zeros((args.exp.num_ppo_steps,) + context["time"].shape),
         )
-    storage = Storage(
-        grid_obs=jnp.zeros((args.exp.num_ppo_steps,) + grid.shape),
-        position_obs=jnp.zeros(
-            (args.exp.num_ppo_steps,) + context["position"].shape, dtype=jnp.int32
-        ),
-        actions=jnp.zeros(
-            (args.exp.num_ppo_steps,) + env.total_action_space.shape,
-            dtype=jnp.int32,
-        ),
-        logprobs=jnp.zeros((args.exp.num_ppo_steps, *env.total_action_space.shape)),
-        dones=jnp.zeros((args.exp.num_ppo_steps, args.env.num_envs)),
-        values=jnp.zeros((args.exp.num_ppo_steps, args.env.num_envs)),
-        advantages=jnp.zeros((args.exp.num_ppo_steps, args.env.num_envs)),
-        returns=jnp.zeros((args.exp.num_ppo_steps, args.env.num_envs)),
-        rewards=jnp.zeros((args.exp.num_ppo_steps, args.env.num_envs)),
-    )
 
     @jax.jit
     def get_action_and_value(
@@ -753,9 +748,23 @@ def run_rollout_loop(
         value = critic.apply(params["critic_params"], hidden).squeeze()
         return logprobs, entropies, value
 
+    @jax.jit
     def compute_gae_once(carry, inp, gamma, gae_lambda):
         advantages = carry
         nextdone, nextvalues, curvalues, reward = inp
+        # jax.debug.callback(
+        #     gae_once_printer,
+        #     (
+        #         jnp.array(
+        #             [
+        #                 advantages,
+        #                 nextvalues,
+        #                 curvalues,
+        #                 reward,
+        #             ]
+        #         )
+        #     ),
+        # )
         nextnonterminal = 1.0 - nextdone
 
         delta = reward + gamma * nextvalues * nextnonterminal - curvalues

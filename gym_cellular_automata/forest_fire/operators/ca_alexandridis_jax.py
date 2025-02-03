@@ -226,24 +226,30 @@ class PartiallyObservableForestFireJax(Operator):
         )(2, (rows, cols), per_env_context["dousing_count"])
 
         # Count bulldozed cells in each 5x5 neighborhood
-        dousing_weights = jnp.array(
-            [
-                [0.05, 0.05, 0.05, 0.05, 0.05],
-                [0.05, 0.15, 0.15, 0.15, 0.05],
-                [0.05, 0.15, 0.15, 0.15, 0.05],
-                [0.05, 0.15, 0.15, 0.15, 0.05],
-                [0.05, 0.05, 0.05, 0.05, 0.05],
-            ]
+        dousing_weights = (
+            jnp.array(
+                [
+                    [0.005, 0.005, 0.005, 0.005, 0.005],
+                    [0.005, 0.010, 0.010, 0.010, 0.005],
+                    [0.005, 0.010, 0.010, 0.010, 0.005],
+                    [0.005, 0.010, 0.010, 0.010, 0.005],
+                    [0.005, 0.005, 0.005, 0.005, 0.005],
+                ]
+            )
+            - 0.0025
         )
         dousing_weights = dousing_weights[None, None, ...]
-        heat_weights = jnp.array(
-            [
-                [0.02, 0.02, 0.02, 0.02, 0.02],
-                [0.02, 0.08, 0.08, 0.08, 0.02],
-                [0.02, 0.08, 0.08, 0.08, 0.02],
-                [0.02, 0.08, 0.08, 0.08, 0.02],
-                [0.02, 0.02, 0.02, 0.02, 0.02],
-            ]
+        heat_weights = (
+            jnp.array(
+                [
+                    [0.002, 0.002, 0.002, 0.002, 0.002],
+                    [0.002, 0.007, 0.007, 0.007, 0.002],
+                    [0.002, 0.007, 0.007, 0.007, 0.002],
+                    [0.002, 0.007, 0.007, 0.007, 0.002],
+                    [0.002, 0.002, 0.002, 0.002, 0.002],
+                ]
+            )
+            + 0.0003
         )
         heat_weights = heat_weights[None, None, ...]
         dousing_neighborhoods = dousing_neighborhoods * dousing_weights
@@ -269,7 +275,7 @@ class PartiallyObservableForestFireJax(Operator):
 
         # Generate random fire ages (3-5) for new fires
         key, fire_age_key = random.split(key)
-        new_fire_ages = random.randint(fire_age_key, grid.shape, 8, 15)
+        new_fire_ages = random.randint(fire_age_key, grid.shape, 20, 35)
 
         # Sets to fire if the following:
         # - If the cell is a tree

@@ -676,7 +676,7 @@ def parse_args():
     exp.add_argument("--num-ppo-steps", type=int, default=128)
     exp.add_argument("--no-train", "-t", action="store_true")
     exp.add_argument("--params", type=str)
-
+    exp.add_argument("--description", type=str, default="")
     args = parser.parse_args()
     return args
 
@@ -721,6 +721,7 @@ def args_to_structured_args(args) -> Args:
         num_ppo_steps=args.num_ppo_steps,
         no_train=args.no_train,
         params_path=args.params,
+        description=args.description,
     )
 
     return Args(ppo=ppo_args, env=env_args, viz=viz_args, exp=exp_args)
