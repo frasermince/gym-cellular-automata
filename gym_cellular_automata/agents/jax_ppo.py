@@ -143,10 +143,10 @@ class Network(nn.Module):
 class Critic(nn.Module):
     @nn.compact
     def __call__(self, x):
-        # x = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
-        #     x
-        # )
-        # x = nn.relu(x)
+        x = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
+            x
+        )
+        x = nn.relu(x)
         # x = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
         #     x
         # )
@@ -162,10 +162,10 @@ class Actor(nn.Module):
 
     @nn.compact
     def __call__(self, x):
-        # features = nn.Dense(
-        #     64, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0)
-        # )(x)
-        # features = nn.relu(features)
+        features = nn.Dense(
+            64, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0)
+        )(x)
+        features = nn.relu(features)
         # features = nn.Dense(
         #     64, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0)
         # )(features)
