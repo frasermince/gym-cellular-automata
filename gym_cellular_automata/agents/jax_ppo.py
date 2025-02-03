@@ -1071,6 +1071,7 @@ def run_rollout_loop(
         },
     )
     storage_returns = []
+    last_4_grid_storages = []
     action_count = [0 for i in range(9)]
     with orbax.checkpoint.CheckpointManager(
         "/tmp/flax_ckpt/orbax/managed",
@@ -1128,6 +1129,9 @@ def run_rollout_loop(
                         build_storage_return(storage, recording_contexts, env)
                     )
             storage = compute_gae(agent_state, next_obs, next_done, storage)
+            last_4_grid_storages.append(storage.grid_obs)
+            if len(last_4_grid_storages) > 4:
+                last_4_grid_storages.pop(0)
 
             agent_state, loss, pg_loss, v_loss, entropy_loss, approx_kl, key = (
                 update_ppo(
@@ -1322,6 +1326,16 @@ def run_rollout_loop(
                 },
                 refresh=True,
             )
+            if iteration % 500 == 0 or iteration == 5:
+                frames = []
+                for grid_storage in last_4_grid_storages:
+                    for i in range(grid_storage.shape[0]):
+                        frames.append(grid_storage[i, 0])
+                fps = 1000 / 80
+                frames = np.stack(frames)
+                frames = frames.transpose(0, 3, 1, 2)
+                wandb.log({"video": wandb.Video(frames, fps=fps)})
+
             if iteration % 200 == 0 or iteration == 1:
                 # Save model parameters using checkpoint manager
                 checkpoint_manager.save(
