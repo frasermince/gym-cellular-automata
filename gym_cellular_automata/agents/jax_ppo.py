@@ -69,10 +69,13 @@ SHOULD_SHARD = False
 
 
 class Network(nn.Module):
+    conv_count: int = 3
+    maxpool_count: int = 2
+
     @nn.compact
     def __call__(self, grid):
         x = grid / 255.0
-        if grid.shape[1] <= 32:
+        if grid.shape[1] < 32:
             # For small grids, use smaller strides
             x = nn.Conv(
                 32,
@@ -104,33 +107,55 @@ class Network(nn.Module):
         else:
             x = nn.Conv(
                 32,
-                kernel_size=(8, 8),
-                strides=(4, 4),
-                padding="VALID",
-                kernel_init=orthogonal(np.sqrt(2)),
-                bias_init=constant(0.0),
-            )(x)
-            x = nn.relu(x)
-            x = nn.Conv(
-                64,
-                kernel_size=(4, 4),
+                kernel_size=(3, 3),
                 strides=(2, 2),
-                padding="VALID",
+                padding="SAME",
                 kernel_init=orthogonal(np.sqrt(2)),
                 bias_init=constant(0.0),
             )(x)
             x = nn.relu(x)
 
-            x = nn.Conv(
-                64,
-                kernel_size=(3, 3),
-                strides=(1, 1),
-                padding="VALID",
-                kernel_init=orthogonal(np.sqrt(2)),
-                bias_init=constant(0.0),
-            )(x)
+            if conv_count >= 2:
+                x = nn.Conv(
+                    64,
+                    kernel_size=(3, 3),
+                    strides=(2, 2) if conv_count >= 3 else (1, 1),
+                    padding="SAME",
+                    kernel_init=orthogonal(np.sqrt(2)),
+                    bias_init=constant(0.0),
+                )(x)
+                x = nn.relu(x)
+
+            if maxpool_count >= 1:
+                x = nn.max_pool(x, window_shape=(3, 3), strides=(2, 2), padding="SAME")
+
+            if conv_count >= 3:
+                x = nn.Conv(
+                    64,
+                    kernel_size=(3, 3),
+                    strides=(2, 2) if conv_count >= 4 else (1, 1),
+                    padding="SAME",
+                    kernel_init=orthogonal(np.sqrt(2)),
+                    bias_init=constant(0.0),
+                )(x)
+                x = nn.relu(x)
+
+            if conv_count >= 4:
+                x = nn.Conv(
+                    64,
+                    kernel_size=(3, 3),
+                    strides=(1, 1),
+                    padding="SAME",
+                    kernel_init=orthogonal(np.sqrt(2)),
+                    bias_init=constant(0.0),
+                )(x)
+                x = nn.relu(x)
+
+            if maxpool_count >= 2:
+                x = nn.max_pool(x, window_shape=(3, 3), strides=(2, 2), padding="SAME")
 
         x = nn.relu(x)
+        # x = nn.max_pool(x, window_shape=(3, 3), strides=(2, 2), padding="SAME")
         x = x.reshape((x.shape[0], -1))
 
         x = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
@@ -147,10 +172,10 @@ class Critic(nn.Module):
             x
         )
         x = nn.relu(x)
-        # x = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
-        #     x
-        # )
-        # x = nn.relu(x)
+        x = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
+            x
+        )
+        x = nn.relu(x)
         return nn.Dense(1, kernel_init=orthogonal(1), bias_init=constant(0.0))(x)
 
 
@@ -162,10 +187,10 @@ class Actor(nn.Module):
 
     @nn.compact
     def __call__(self, x):
-        features = nn.Dense(
-            64, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0)
-        )(x)
-        features = nn.relu(features)
+        # features = nn.Dense(
+        #     64, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0)
+        # )(x)
+        # features = nn.relu(features)
         # features = nn.Dense(
         #     64, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0)
         # )(features)
@@ -281,7 +306,7 @@ def run_rollout_loop(
     host = os.environ.get("EXTENDED_MIND_HOST", "")
     if not host:
         host = "local"
-    run_name = f"{args.env.env_id}__lr={args.ppo.learning_rate}__host={host}__seed={args.exp.seed}__speed={args.env.speed_multiplier}__size={args.env.size}__{int(time.time())}"
+    run_name = f"{args.env.env_id}__lr={args.ppo.learning_rate}__host={host}__={args.exp.description}__seed={args.exp.seed}__speed={args.env.speed_multiplier}__size={args.env.size}__{int(time.time())}"
     checkpoint_options = orbax.checkpoint.CheckpointManagerOptions(
         max_to_keep=2, create=True
     )
@@ -545,7 +570,9 @@ def run_rollout_loop(
         # )
         return args.ppo.learning_rate * frac
 
-    network = Network()
+    network = Network(
+        conv_count=args.exp.conv_count, maxpool_count=args.exp.maxpool_count
+    )
     actor = Actor(action_dims=env.action_space.nvec[0], choose_k=env.extension_choices)
     critic = Critic()
 
@@ -576,6 +603,21 @@ def run_rollout_loop(
     writer.add_scalar(
         "charts/critic_params", sum(x.size for x in jax.tree_leaves(critic_params)), 0
     )
+    # Log network architectures to wandb
+    if args.exp.track:
+        wandb.config.update(
+            {
+                "network_architecture": {
+                    "network": network.tabulate(network_key, grid_sample),
+                    "actor": actor.tabulate(
+                        actor_key, network.apply(network_params, grid_sample)
+                    ),
+                    "critic": critic.tabulate(
+                        critic_key, network.apply(network_params, grid_sample)
+                    ),
+                }
+            }
+        )
     print(
         sum(x.size for x in jax.tree_leaves(network_params)),
         sum(x.size for x in jax.tree_leaves(actor_params)),

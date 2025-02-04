@@ -647,6 +647,8 @@ def parse_args():
     env.add_argument("--speed-multiplier", type=float, default=1)
     env.add_argument("--no-hidden", action="store_true")
     env.add_argument("--enable-extensions", action="store_true")
+    env.add_argument("--conv-count", type=int, default=3)
+    env.add_argument("--maxpool-count", type=int, default=2)
 
     # PPO args
     ppo = parser.add_argument_group("PPO")
@@ -722,6 +724,8 @@ def args_to_structured_args(args) -> Args:
         no_train=args.no_train,
         params_path=args.params,
         description=args.description,
+        conv_count=args.conv_count,
+        maxpool_count=args.maxpool_count,
     )
 
     return Args(ppo=ppo_args, env=env_args, viz=viz_args, exp=exp_args)

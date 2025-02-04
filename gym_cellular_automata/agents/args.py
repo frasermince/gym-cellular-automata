@@ -60,6 +60,8 @@ class ExperimentArgs:
     no_train: bool = False
     params_path: str = None
     description: str = ""
+    conv_count: int = 3
+    maxpool_count: int = 2
 
 
 @dataclass
