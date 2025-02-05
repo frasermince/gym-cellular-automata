@@ -53,9 +53,6 @@ def debug_printer(args):
     print(f"Learning Rate Fraction: {learning_rate_frac}")
 
 
-padding_type = "SAME"
-# padding_type = "VALID"
-
 if jax.devices()[0].platform == "tpu":
     jax.config.update("jax_platform_name", "tpu")
     jax.config.update("jax_enable_x64", False)  # Use float32/bfloat16 on TPU
@@ -67,6 +64,9 @@ SHARD_STORAGE = False
 SHOULD_SHARD = False
 # jax.config.update("jax_default_matmul_precision", "bfloat16")
 
+PADDING = "SAME"
+# PADDING = "VALID"
+
 
 class Network(nn.Module):
     conv_count: int = 3
@@ -75,13 +75,14 @@ class Network(nn.Module):
     @nn.compact
     def __call__(self, grid):
         x = grid / 255.0
-        if grid.shape[1] < 32:
+        # if grid.shape[1] < 32:
+        if False:
             # For small grids, use smaller strides
             x = nn.Conv(
                 32,
                 kernel_size=(4, 4),
                 strides=(2, 2),  # Reduced stride
-                padding="VALID",
+                padding=PADDING,
                 kernel_init=orthogonal(np.sqrt(2)),
                 bias_init=constant(0.0),
             )(x)
@@ -90,7 +91,7 @@ class Network(nn.Module):
                 64,
                 kernel_size=(3, 3),
                 strides=(1, 1),  # Reduced stride
-                padding="VALID",
+                padding=PADDING,
                 kernel_init=orthogonal(np.sqrt(2)),
                 bias_init=constant(0.0),
             )(x)
@@ -100,65 +101,93 @@ class Network(nn.Module):
                 64,
                 kernel_size=(2, 2),
                 strides=(1, 1),  # Reduced stride
-                padding="VALID",
+                padding=PADDING,
                 kernel_init=orthogonal(np.sqrt(2)),
                 bias_init=constant(0.0),
             )(x)
-        else:
+        elif True:
             x = nn.Conv(
                 32,
                 kernel_size=(3, 3),
                 strides=(2, 2),
-                padding="SAME",
+                padding=PADDING,
                 kernel_init=orthogonal(np.sqrt(2)),
                 bias_init=constant(0.0),
             )(x)
             x = nn.relu(x)
 
-            if conv_count >= 2:
+            if self.conv_count >= 2:
                 x = nn.Conv(
                     64,
                     kernel_size=(3, 3),
-                    strides=(2, 2) if conv_count >= 3 else (1, 1),
-                    padding="SAME",
+                    strides=(2, 2) if self.conv_count >= 3 else (1, 1),
+                    padding=PADDING,
                     kernel_init=orthogonal(np.sqrt(2)),
                     bias_init=constant(0.0),
                 )(x)
                 x = nn.relu(x)
 
-            if maxpool_count >= 1:
+            if self.maxpool_count >= 2 and self.conv_count >= 3:
                 x = nn.max_pool(x, window_shape=(3, 3), strides=(2, 2), padding="SAME")
 
-            if conv_count >= 3:
+            if self.conv_count >= 3:
                 x = nn.Conv(
                     64,
                     kernel_size=(3, 3),
-                    strides=(2, 2) if conv_count >= 4 else (1, 1),
-                    padding="SAME",
+                    strides=(2, 2) if self.conv_count >= 4 else (1, 1),
+                    padding=PADDING,
                     kernel_init=orthogonal(np.sqrt(2)),
                     bias_init=constant(0.0),
                 )(x)
                 x = nn.relu(x)
 
-            if conv_count >= 4:
+            if self.conv_count >= 4:
                 x = nn.Conv(
                     64,
                     kernel_size=(3, 3),
                     strides=(1, 1),
-                    padding="SAME",
+                    padding=PADDING,
                     kernel_init=orthogonal(np.sqrt(2)),
                     bias_init=constant(0.0),
                 )(x)
                 x = nn.relu(x)
 
-            if maxpool_count >= 2:
+            if self.maxpool_count >= 1:
                 x = nn.max_pool(x, window_shape=(3, 3), strides=(2, 2), padding="SAME")
+        else:
+            x = nn.Conv(
+                32,
+                kernel_size=(8, 8),
+                strides=(4, 4),
+                padding=PADDING,
+                kernel_init=orthogonal(np.sqrt(2)),
+                bias_init=constant(0.0),
+            )(x)
+            x = nn.relu(x)
+            x = nn.max_pool(x, window_shape=(3, 3), strides=(2, 2), padding="SAME")
+            x = nn.Conv(
+                64,
+                kernel_size=(4, 4),
+                strides=(2, 2),
+                padding=PADDING,
+                kernel_init=orthogonal(np.sqrt(2)),
+                bias_init=constant(0.0),
+            )(x)
+            x = nn.relu(x)
+            x = nn.Conv(
+                64,
+                kernel_size=(1, 1),
+                strides=(1, 1),
+                padding=PADDING,
+                kernel_init=orthogonal(np.sqrt(2)),
+                bias_init=constant(0.0),
+            )(x)
 
         x = nn.relu(x)
-        # x = nn.max_pool(x, window_shape=(3, 3), strides=(2, 2), padding="SAME")
+        x = nn.max_pool(x, window_shape=(3, 3), strides=(2, 2), padding="SAME")
         x = x.reshape((x.shape[0], -1))
 
-        x = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
+        x = nn.Dense(512, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
             x
         )
         x = nn.relu(x)
@@ -196,15 +225,15 @@ class Actor(nn.Module):
         # )(features)
         # features = nn.relu(features)
 
-        # x = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
-        #     x
-        # )
-        # x = nn.relu(x)
+        x = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
+            x
+        )
+        x = nn.relu(x)
 
-        # x = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
-        #     x
-        # )
-        # x = nn.relu(x)
+        x = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
+            x
+        )
+        x = nn.relu(x)
 
         # Create logits for each action dimension
         logits = []

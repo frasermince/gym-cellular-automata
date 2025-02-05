@@ -226,30 +226,91 @@ class PartiallyObservableForestFireJax(Operator):
         )(2, (rows, cols), per_env_context["dousing_count"])
 
         # Count bulldozed cells in each 5x5 neighborhood
-        dousing_weights = (
-            jnp.array(
+        DOUSING_BORDER_WEIGHT = 0.002
+        DOUSING_INNER_WEIGHT = 0.007
+        dousing_weights = jnp.array(
+            [
                 [
-                    [0.005, 0.005, 0.005, 0.005, 0.005],
-                    [0.005, 0.010, 0.010, 0.010, 0.005],
-                    [0.005, 0.010, 0.010, 0.010, 0.005],
-                    [0.005, 0.010, 0.010, 0.010, 0.005],
-                    [0.005, 0.005, 0.005, 0.005, 0.005],
-                ]
-            )
-            - 0.0025
+                    DOUSING_BORDER_WEIGHT,
+                    DOUSING_BORDER_WEIGHT,
+                    DOUSING_BORDER_WEIGHT,
+                    DOUSING_BORDER_WEIGHT,
+                    DOUSING_BORDER_WEIGHT,
+                ],
+                [
+                    DOUSING_BORDER_WEIGHT,
+                    DOUSING_INNER_WEIGHT,
+                    DOUSING_INNER_WEIGHT,
+                    DOUSING_INNER_WEIGHT,
+                    DOUSING_BORDER_WEIGHT,
+                ],
+                [
+                    DOUSING_BORDER_WEIGHT,
+                    DOUSING_INNER_WEIGHT,
+                    DOUSING_INNER_WEIGHT,
+                    DOUSING_INNER_WEIGHT,
+                    DOUSING_BORDER_WEIGHT,
+                ],
+                [
+                    DOUSING_BORDER_WEIGHT,
+                    DOUSING_INNER_WEIGHT,
+                    DOUSING_INNER_WEIGHT,
+                    DOUSING_INNER_WEIGHT,
+                    DOUSING_BORDER_WEIGHT,
+                ],
+                [
+                    DOUSING_BORDER_WEIGHT,
+                    DOUSING_BORDER_WEIGHT,
+                    DOUSING_BORDER_WEIGHT,
+                    DOUSING_BORDER_WEIGHT,
+                    DOUSING_BORDER_WEIGHT,
+                ],
+            ]
         )
         dousing_weights = dousing_weights[None, None, ...]
+        HEAT_BORDER_WEIGHT = 0.003
+        HEAT_INNER_WEIGHT = 0.007
         heat_weights = (
             jnp.array(
                 [
-                    [0.002, 0.002, 0.002, 0.002, 0.002],
-                    [0.002, 0.007, 0.007, 0.007, 0.002],
-                    [0.002, 0.007, 0.007, 0.007, 0.002],
-                    [0.002, 0.007, 0.007, 0.007, 0.002],
-                    [0.002, 0.002, 0.002, 0.002, 0.002],
+                    [
+                        HEAT_BORDER_WEIGHT,
+                        HEAT_BORDER_WEIGHT,
+                        HEAT_BORDER_WEIGHT,
+                        HEAT_BORDER_WEIGHT,
+                        HEAT_BORDER_WEIGHT,
+                    ],
+                    [
+                        HEAT_BORDER_WEIGHT,
+                        HEAT_INNER_WEIGHT,
+                        HEAT_INNER_WEIGHT,
+                        HEAT_INNER_WEIGHT,
+                        HEAT_BORDER_WEIGHT,
+                    ],
+                    [
+                        HEAT_BORDER_WEIGHT,
+                        HEAT_INNER_WEIGHT,
+                        HEAT_INNER_WEIGHT,
+                        HEAT_INNER_WEIGHT,
+                        HEAT_BORDER_WEIGHT,
+                    ],
+                    [
+                        HEAT_BORDER_WEIGHT,
+                        HEAT_INNER_WEIGHT,
+                        HEAT_INNER_WEIGHT,
+                        HEAT_INNER_WEIGHT,
+                        HEAT_BORDER_WEIGHT,
+                    ],
+                    [
+                        HEAT_BORDER_WEIGHT,
+                        HEAT_BORDER_WEIGHT,
+                        HEAT_BORDER_WEIGHT,
+                        HEAT_BORDER_WEIGHT,
+                        HEAT_BORDER_WEIGHT,
+                    ],
                 ]
             )
-            + 0.0003
+            - 0.001
         )
         heat_weights = heat_weights[None, None, ...]
         dousing_neighborhoods = dousing_neighborhoods * dousing_weights
@@ -275,7 +336,7 @@ class PartiallyObservableForestFireJax(Operator):
 
         # Generate random fire ages (3-5) for new fires
         key, fire_age_key = random.split(key)
-        new_fire_ages = random.randint(fire_age_key, grid.shape, 20, 35)
+        new_fire_ages = random.randint(fire_age_key, grid.shape, 35, 45)
 
         # Sets to fire if the following:
         # - If the cell is a tree

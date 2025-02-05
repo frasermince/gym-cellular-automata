@@ -644,7 +644,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         for env in range(self.num_envs):
             for r, c in self._pos_fire[env]:
                 grid = grid.at[env, r, c].set(self._fire)
-                fire_age = fire_age.at[env, r, c].set(35)
+                fire_age = fire_age.at[env, r, c].set(50)
 
         return jnp.array(grid), fire_age
 
@@ -1081,11 +1081,11 @@ class MDP(Operator):
         rgb_grid, extended_grid = self.build_observation_on_extensions(
             grid, position, action, per_env_context, shared_context
         )
-        next_per_env_context["is_night"] = jnp.where(
-            next_per_env_context["time_step"] % shared_context["day_length"] == 0,
-            1 - next_per_env_context["is_night"],
-            next_per_env_context["is_night"],
-        )
+        # next_per_env_context["is_night"] = jnp.where(
+        #     next_per_env_context["time_step"] % shared_context["day_length"] == 0,
+        #     1 - next_per_env_context["is_night"],
+        #     next_per_env_context["is_night"],
+        # )
         # Convert JAX array to numpy and ensure values are in valid RGB range
         # rgb_array = (jnp.clip(rgb_grid, 0, 1) * 255).astype(jnp.uint8).copy()
 
