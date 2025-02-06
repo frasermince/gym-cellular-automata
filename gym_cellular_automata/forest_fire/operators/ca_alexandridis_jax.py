@@ -3,9 +3,11 @@ from jax import jit, vmap, random, lax
 from gymnasium import spaces
 from functools import partial
 from gym_cellular_automata._config import TYPE_BOX
+import math
 import numpy as np
 
 from gym_cellular_automata.operator import Operator
+import jax
 
 import os
 
@@ -36,6 +38,12 @@ def moore_n(n: int, position: tuple, grid: jnp.ndarray, invariant: float = 0.0):
     return neighborhood
 
 
+def dousing_printer(args):
+    dousing, burn = args
+    print(f"Max Dousing: {jnp.max(dousing)}")
+    print(f"Max Burn: {jnp.max(burn)}")
+
+
 class PartiallyObservableForestFireJax(Operator):
     grid_dependant = True
     action_dependant = False
@@ -43,8 +51,107 @@ class PartiallyObservableForestFireJax(Operator):
 
     deterministic = False
 
-    def __init__(self, empty, tree, fire, *args, **kwargs):
+    def __init__(self, grid_size, empty, tree, fire, *args, **kwargs):
         super().__init__(*args, **kwargs)
+
+        self.grid_size = grid_size
+        # In the amount of time it takes to go halfway across and most of the way down we want the fire to just start spreading and build up
+        self.initial_spread_time = self.grid_size + (self.grid_size // 2)
+        self.fire_age_min = self.initial_spread_time * 1.5
+        self.fire_age_max = self.initial_spread_time * 1.75
+        self.burn_kernel_radius = math.ceil(math.log2(self.grid_size)) - 2
+        # self.burn_kernel =
+        DOUSING_BORDER_WEIGHT = 0.0007 * self.fire_age_max * 0.50
+        DOUSING_INNER_WEIGHT = 0.006 * self.fire_age_max * 0.50
+
+        self.dousing_weights = jnp.array(
+            [
+                [
+                    DOUSING_BORDER_WEIGHT,
+                    DOUSING_BORDER_WEIGHT,
+                    DOUSING_BORDER_WEIGHT,
+                    DOUSING_BORDER_WEIGHT,
+                    DOUSING_BORDER_WEIGHT,
+                ],
+                [
+                    DOUSING_BORDER_WEIGHT,
+                    DOUSING_INNER_WEIGHT,
+                    DOUSING_INNER_WEIGHT,
+                    DOUSING_INNER_WEIGHT,
+                    DOUSING_BORDER_WEIGHT,
+                ],
+                [
+                    DOUSING_BORDER_WEIGHT,
+                    DOUSING_INNER_WEIGHT,
+                    DOUSING_INNER_WEIGHT,
+                    DOUSING_INNER_WEIGHT,
+                    DOUSING_BORDER_WEIGHT,
+                ],
+                [
+                    DOUSING_BORDER_WEIGHT,
+                    DOUSING_INNER_WEIGHT,
+                    DOUSING_INNER_WEIGHT,
+                    DOUSING_INNER_WEIGHT,
+                    DOUSING_BORDER_WEIGHT,
+                ],
+                [
+                    DOUSING_BORDER_WEIGHT,
+                    DOUSING_BORDER_WEIGHT,
+                    DOUSING_BORDER_WEIGHT,
+                    DOUSING_BORDER_WEIGHT,
+                    DOUSING_BORDER_WEIGHT,
+                ],
+            ]
+        )
+
+        # Calculate weights for each layer, decreasing outward from center
+        def build_burn_kernel(burn_kernel_radius):
+            total_weight = 0.065
+            num_layers = burn_kernel_radius
+            layer_weights = []
+            remaining_weight = total_weight
+
+            # Outer layers split remaining weight, decreasing by factor of 10
+            for i in range(num_layers):
+                # First square will be 3x3, second will be 5x5, etc.
+                size_of_outer_layer = (i * 2 + 3) ** 2
+                inner_area = (i * 2 + 1) ** 2
+                cells_in_layer = size_of_outer_layer - inner_area
+
+                if i == 0:
+                    cells_in_layer += 1
+
+                if i == num_layers - 1:
+                    layer_weights.append(remaining_weight / cells_in_layer)
+                else:
+                    layer_weight = remaining_weight * 0.60 / cells_in_layer
+                    layer_weights.append(layer_weight)
+                    remaining_weight = remaining_weight * 0.40
+
+            heat_weights = jnp.zeros(
+                (2 * burn_kernel_radius + 1, 2 * burn_kernel_radius + 1)
+            )
+
+            # Set center weight
+            center = burn_kernel_radius
+            heat_weights = heat_weights.at[center, center].set(layer_weights[0])
+
+            # Fill layers from center outward
+            for i in range(num_layers):
+                weight = layer_weights[i]
+                # Calculate ring indices
+                ring = i + 1
+                start = center - ring
+                end = center + ring + 1
+                # Set weights for current ring
+                heat_weights = heat_weights.at[start:end, start].set(weight)
+                heat_weights = heat_weights.at[start:end, end - 1].set(weight)
+                heat_weights = heat_weights.at[start, start:end].set(weight)
+                heat_weights = heat_weights.at[end - 1, start:end].set(weight)
+            return heat_weights
+
+        self.burn_kernel = build_burn_kernel(self.burn_kernel_radius)
+        self.burn_kernel = self.burn_kernel[None, None, ...]
 
         self.empty = empty
         self.tree = tree
@@ -77,7 +184,17 @@ class PartiallyObservableForestFireJax(Operator):
         p_den = lookup_vmap(density, den_probs)
 
         # Vectorize the lookup
-
+        # jax.debug.callback(
+        #     dousing_printer,
+        #     (
+        #         jnp.array(
+        #             [
+        #                 dousing_fire_retardant,
+        #                 heat,
+        #             ]
+        #         )
+        #     ),
+        # )
         p_h = heat - dousing_fire_retardant
         a = 0.078
         p_slope = jnp.exp(a * slope)
@@ -218,105 +335,17 @@ class PartiallyObservableForestFireJax(Operator):
         neighborhoods = vmap(
             vmap(moore_n, in_axes=(None, 0, None)), in_axes=(None, 0, None)
         )(1, (rows, cols), grid)
-        larger_neighborhoods = vmap(
+        burn_neighborhoods = vmap(
             vmap(moore_n, in_axes=(None, 0, None)), in_axes=(None, 0, None)
-        )(2, (rows, cols), grid)
+        )(self.burn_kernel_radius, (rows, cols), grid)
         dousing_neighborhoods = vmap(
             vmap(moore_n, in_axes=(None, 0, None)), in_axes=(None, 0, None)
         )(2, (rows, cols), per_env_context["dousing_count"])
 
-        # Count bulldozed cells in each 5x5 neighborhood
-        DOUSING_BORDER_WEIGHT = 0.002
-        DOUSING_INNER_WEIGHT = 0.007
-        dousing_weights = jnp.array(
-            [
-                [
-                    DOUSING_BORDER_WEIGHT,
-                    DOUSING_BORDER_WEIGHT,
-                    DOUSING_BORDER_WEIGHT,
-                    DOUSING_BORDER_WEIGHT,
-                    DOUSING_BORDER_WEIGHT,
-                ],
-                [
-                    DOUSING_BORDER_WEIGHT,
-                    DOUSING_INNER_WEIGHT,
-                    DOUSING_INNER_WEIGHT,
-                    DOUSING_INNER_WEIGHT,
-                    DOUSING_BORDER_WEIGHT,
-                ],
-                [
-                    DOUSING_BORDER_WEIGHT,
-                    DOUSING_INNER_WEIGHT,
-                    DOUSING_INNER_WEIGHT,
-                    DOUSING_INNER_WEIGHT,
-                    DOUSING_BORDER_WEIGHT,
-                ],
-                [
-                    DOUSING_BORDER_WEIGHT,
-                    DOUSING_INNER_WEIGHT,
-                    DOUSING_INNER_WEIGHT,
-                    DOUSING_INNER_WEIGHT,
-                    DOUSING_BORDER_WEIGHT,
-                ],
-                [
-                    DOUSING_BORDER_WEIGHT,
-                    DOUSING_BORDER_WEIGHT,
-                    DOUSING_BORDER_WEIGHT,
-                    DOUSING_BORDER_WEIGHT,
-                    DOUSING_BORDER_WEIGHT,
-                ],
-            ]
-        )
-        dousing_weights = dousing_weights[None, None, ...]
-        HEAT_BORDER_WEIGHT = 0.003
-        HEAT_INNER_WEIGHT = 0.007
-        heat_weights = (
-            jnp.array(
-                [
-                    [
-                        HEAT_BORDER_WEIGHT,
-                        HEAT_BORDER_WEIGHT,
-                        HEAT_BORDER_WEIGHT,
-                        HEAT_BORDER_WEIGHT,
-                        HEAT_BORDER_WEIGHT,
-                    ],
-                    [
-                        HEAT_BORDER_WEIGHT,
-                        HEAT_INNER_WEIGHT,
-                        HEAT_INNER_WEIGHT,
-                        HEAT_INNER_WEIGHT,
-                        HEAT_BORDER_WEIGHT,
-                    ],
-                    [
-                        HEAT_BORDER_WEIGHT,
-                        HEAT_INNER_WEIGHT,
-                        HEAT_INNER_WEIGHT,
-                        HEAT_INNER_WEIGHT,
-                        HEAT_BORDER_WEIGHT,
-                    ],
-                    [
-                        HEAT_BORDER_WEIGHT,
-                        HEAT_INNER_WEIGHT,
-                        HEAT_INNER_WEIGHT,
-                        HEAT_INNER_WEIGHT,
-                        HEAT_BORDER_WEIGHT,
-                    ],
-                    [
-                        HEAT_BORDER_WEIGHT,
-                        HEAT_BORDER_WEIGHT,
-                        HEAT_BORDER_WEIGHT,
-                        HEAT_BORDER_WEIGHT,
-                        HEAT_BORDER_WEIGHT,
-                    ],
-                ]
-            )
-            - 0.001
-        )
-        heat_weights = heat_weights[None, None, ...]
-        dousing_neighborhoods = dousing_neighborhoods * dousing_weights
+        dousing_neighborhoods = dousing_neighborhoods * self.dousing_weights
         dousing_fire_retardant = dousing_neighborhoods.sum(axis=(-1, -2))
 
-        heat_neighborhoods = (larger_neighborhoods == self.fire) * heat_weights
+        heat_neighborhoods = (burn_neighborhoods == self.fire) * self.burn_kernel
         heat = heat_neighborhoods.sum(axis=(-1, -2))
 
         # Handle direct fire spread
@@ -336,7 +365,9 @@ class PartiallyObservableForestFireJax(Operator):
 
         # Generate random fire ages (3-5) for new fires
         key, fire_age_key = random.split(key)
-        new_fire_ages = random.randint(fire_age_key, grid.shape, 35, 45)
+        new_fire_ages = random.randint(
+            fire_age_key, grid.shape, self.fire_age_min, self.fire_age_max
+        )
 
         # Sets to fire if the following:
         # - If the cell is a tree

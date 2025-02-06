@@ -192,7 +192,7 @@ class Network(nn.Module):
             if self.maxpool_count >= 1:
                 x = nn.max_pool(x, window_shape=(3, 3), strides=(2, 2), padding="SAME")
         else:
-            channels = [16, 32, 32]
+            channels = [16, 32, 64]
             for channel in channels:
                 x = ConvSequence(channel)(x)
 

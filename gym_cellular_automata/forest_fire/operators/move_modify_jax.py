@@ -104,9 +104,7 @@ class ModifyJax(Operator):
         previous = per_env_context["dousing_count"]
         per_env_context["dousing_count"] = jnp.where(
             action == 1,
-            per_env_context["dousing_count"]
-            .at[row, col]
-            .set(per_env_context["dousing_count"][row, col] + 1),
+            per_env_context["dousing_count"].at[row, col].set(1),
             per_env_context["dousing_count"],
         )
 

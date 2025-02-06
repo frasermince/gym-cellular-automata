@@ -203,7 +203,8 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
 
         self._fire_age = jnp.zeros((num_envs, nrows, ncols))
         self._p_fire = 0.00033
-        self._p_tree = 0.0005
+        # self._p_tree = 0.0005
+        self._p_tree = 0
         self._p_wind_change = 0.06
 
         self._effects = {
@@ -271,6 +272,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         #     self._empty, self._tree, self._fire, **self.ca_space
         # )
         self.ca = PartiallyObservableForestFireJax(
+            self.nrows,
             self._empty,
             self._tree,
             self._fire,
@@ -628,23 +630,22 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
                 for _ in range(self.num_envs):
                     r = self.nrows // 2  # + self._noise(self.nrows)
                     c = self.ncols // 2  # + self._noise(self.ncols)
-                    self._pos_fire.append(
-                        [(r, c), (r, c - 1), (r - 1, c), (r - 1, c - 1)]
-                    )
+                    self._pos_fire.append([(r, c), (r, c - 1)])
             else:
                 self._pos_fire = []
                 for _ in range(self.num_envs):
                     r = 3 * self.nrows // 4  # + self._noise(self.nrows)
                     c = 1 * self.ncols // 4  # + self._noise(self.ncols)
-                    self._pos_fire.append(
-                        [(r, c), (r, c - 1), (r - 1, c), (r - 1, c - 1)]
-                    )
+                    self._pos_fire.append([(r, c), (r, c - 1)])
+
+        initial_spread_time = self.nrows + (self.nrows // 2)
+        initial_fire_age = initial_spread_time * 2
 
         fire_age = self._fire_age
         for env in range(self.num_envs):
             for r, c in self._pos_fire[env]:
                 grid = grid.at[env, r, c].set(self._fire)
-                fire_age = fire_age.at[env, r, c].set(50)
+                fire_age = fire_age.at[env, r, c].set(initial_fire_age)
 
         return jnp.array(grid), fire_age
 
@@ -1039,7 +1040,7 @@ class MDP(Operator):
 
         # Apply water effect to doused cells
         # Scale the effect based on dousing count (max effect at count=3)
-        dousing_strength = jnp.minimum(dousing_count, 3) / 4.0
+        dousing_strength = jnp.where(dousing_count == 1, 0.75, 0)
         water_tint = jnp.where(
             is_night[..., None], jnp.array([255, 165, 0]), jnp.array([0, 0, 200])
         )  # Orange at night, blue during day
