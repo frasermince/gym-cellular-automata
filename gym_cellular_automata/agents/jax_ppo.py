@@ -68,6 +68,43 @@ PADDING = "SAME"
 # PADDING = "VALID"
 
 
+class ResidualBlock(nn.Module):
+    channels: int
+
+    @nn.compact
+    def __call__(self, x):
+        inputs = x
+        x = nn.relu(x)
+        x = nn.Conv(
+            features=self.channels,
+            kernel_size=(3, 3),
+            padding="SAME",
+            kernel_init=orthogonal(np.sqrt(2)),
+            bias_init=constant(0.0),
+        )(x)
+        x = nn.relu(x)
+        x = nn.Conv(
+            features=self.channels,
+            kernel_size=(3, 3),
+            padding="SAME",
+            kernel_init=orthogonal(np.sqrt(2)),
+            bias_init=constant(0.0),
+        )(x)
+        return x + inputs
+
+
+class ConvSequence(nn.Module):
+    channels: int
+
+    @nn.compact
+    def __call__(self, x):
+        x = nn.Conv(features=self.channels, kernel_size=(3, 3), padding="SAME")(x)
+        x = nn.max_pool(x, window_shape=(3, 3), strides=(2, 2), padding="SAME")
+        x = ResidualBlock(channels=self.channels)(x)
+        x = ResidualBlock(channels=self.channels)(x)
+        return x
+
+
 class Network(nn.Module):
     conv_count: int = 3
     maxpool_count: int = 2
@@ -105,7 +142,7 @@ class Network(nn.Module):
                 kernel_init=orthogonal(np.sqrt(2)),
                 bias_init=constant(0.0),
             )(x)
-        elif True:
+        elif False:
             x = nn.Conv(
                 32,
                 kernel_size=(3, 3),
@@ -155,39 +192,14 @@ class Network(nn.Module):
             if self.maxpool_count >= 1:
                 x = nn.max_pool(x, window_shape=(3, 3), strides=(2, 2), padding="SAME")
         else:
-            x = nn.Conv(
-                32,
-                kernel_size=(8, 8),
-                strides=(4, 4),
-                padding=PADDING,
-                kernel_init=orthogonal(np.sqrt(2)),
-                bias_init=constant(0.0),
-            )(x)
-            x = nn.relu(x)
-            x = nn.max_pool(x, window_shape=(3, 3), strides=(2, 2), padding="SAME")
-            x = nn.Conv(
-                64,
-                kernel_size=(4, 4),
-                strides=(2, 2),
-                padding=PADDING,
-                kernel_init=orthogonal(np.sqrt(2)),
-                bias_init=constant(0.0),
-            )(x)
-            x = nn.relu(x)
-            x = nn.Conv(
-                64,
-                kernel_size=(1, 1),
-                strides=(1, 1),
-                padding=PADDING,
-                kernel_init=orthogonal(np.sqrt(2)),
-                bias_init=constant(0.0),
-            )(x)
+            channels = [16, 32, 32]
+            for channel in channels:
+                x = ConvSequence(channel)(x)
 
         x = nn.relu(x)
-        x = nn.max_pool(x, window_shape=(3, 3), strides=(2, 2), padding="SAME")
         x = x.reshape((x.shape[0], -1))
 
-        x = nn.Dense(512, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
+        x = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
             x
         )
         x = nn.relu(x)
@@ -197,10 +209,10 @@ class Network(nn.Module):
 class Critic(nn.Module):
     @nn.compact
     def __call__(self, x):
-        x = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
-            x
-        )
-        x = nn.relu(x)
+        # x = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
+        #     x
+        # )
+        # x = nn.relu(x)
         x = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
             x
         )
@@ -225,10 +237,10 @@ class Actor(nn.Module):
         # )(features)
         # features = nn.relu(features)
 
-        x = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
-            x
-        )
-        x = nn.relu(x)
+        # x = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
+        #     x
+        # )
+        # x = nn.relu(x)
 
         x = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
             x
