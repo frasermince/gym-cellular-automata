@@ -142,7 +142,35 @@ class Network(nn.Module):
                 kernel_init=orthogonal(np.sqrt(2)),
                 bias_init=constant(0.0),
             )(x)
-        elif False:
+        elif True:
+            x = nn.Conv(
+                32,
+                kernel_size=(8, 8),
+                strides=(4, 4),
+                padding="VALID",
+                kernel_init=orthogonal(np.sqrt(2)),
+                bias_init=constant(0.0),
+            )(x)
+            x = nn.relu(x)
+            x = nn.Conv(
+                64,
+                kernel_size=(4, 4),
+                strides=(2, 2),
+                padding="VALID",
+                kernel_init=orthogonal(np.sqrt(2)),
+                bias_init=constant(0.0),
+            )(x)
+            x = nn.relu(x)
+            x = nn.Conv(
+                64,
+                kernel_size=(3, 3),
+                strides=(1, 1),
+                padding="VALID",
+                kernel_init=orthogonal(np.sqrt(2)),
+                bias_init=constant(0.0),
+            )(x)
+            x = nn.relu(x)
+        elif True:
             x = nn.Conv(
                 32,
                 kernel_size=(3, 3),
