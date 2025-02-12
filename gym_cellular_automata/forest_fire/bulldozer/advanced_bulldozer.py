@@ -86,6 +86,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         num_envs=8,
         speed_move=0.12,
         speed_act=0.03,
+        speed_multiplier=1.0,
         pos_bull: Optional[Tuple] = None,
         pos_fire: Optional[Tuple] = None,
         t_move: Optional[float] = None,
@@ -99,6 +100,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
         **kwargs,
     ):
         super().__init__(nrows, ncols, **kwargs)
+        self.speed_multiplier = speed_multiplier
         self.middle_fire = middle_fire
         self.use_hidden = use_hidden
         self.starting_key = key
@@ -1082,13 +1084,11 @@ class MDP(Operator):
         rgb_grid, extended_grid = self.build_observation_on_extensions(
             grid, position, action, per_env_context, shared_context
         )
-        # next_per_env_context["is_night"] = jnp.where(
-        #     next_per_env_context["time_step"] % shared_context["day_length"] == 0,
-        #     1 - next_per_env_context["is_night"],
-        #     next_per_env_context["is_night"],
-        # )
-        # Convert JAX array to numpy and ensure values are in valid RGB range
-        # rgb_array = (jnp.clip(rgb_grid, 0, 1) * 255).astype(jnp.uint8).copy()
+        next_per_env_context["is_night"] = jnp.where(
+            next_per_env_context["time_step"] % shared_context["day_length"] == 0,
+            1 - next_per_env_context["is_night"],
+            next_per_env_context["is_night"],
+        )
 
         return (rgb_grid, grid, extended_grid), (
             next_per_env_context,

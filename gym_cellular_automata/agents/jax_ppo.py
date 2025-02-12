@@ -22,16 +22,33 @@ import math
 from gym_cellular_automata.agents.args import Args
 from functools import partial
 
+IS_FIRE_FIGHTER = True
+
+
+def gae_printer(args):
+    value = args
+    print(f"Value: {value}")
+    # import pdb
+
+    # pdb.set_trace()
+
+
+def gae_once_printer(args):
+    advantages, values, curvalues, reward = args
+    print(f"Advantages: {advantages}")
+    print(f"Values: {values}")
+    print(f"Curvalues: {curvalues}")
+    print(f"Reward: {reward}")
+    # import pdb
+
+    # pdb.set_trace()
+
 
 def value_printer(args):
-    new_value = args[0]
-    mb_returns = args[1]
-
-    print(f"New Value: {new_value}")
+    value, mb_returns = args
+    print(f"Value: {value}")
     print(f"MB Returns: {mb_returns}")
-    import pdb
-
-    pdb.set_trace()
+    print("Diff", value - mb_returns)
 
 
 def debug_printer(args):
@@ -105,6 +122,7 @@ class ConvSequence(nn.Module):
         return x
 
 
+# All of these if elses are very silly. This was just so I could try out different architectures.
 class Network(nn.Module):
     conv_count: int = 3
     maxpool_count: int = 2
@@ -113,7 +131,32 @@ class Network(nn.Module):
     def __call__(self, grid):
         x = grid / 255.0
         # if grid.shape[1] < 32:
-        if False:
+        if not IS_FIRE_FIGHTER:
+            x = nn.Conv(
+                16,
+                kernel_size=(2, 2),
+                padding="VALID",
+                kernel_init=orthogonal(np.sqrt(2)),
+                bias_init=constant(0.0),
+            )(x)
+            x = nn.relu(x)
+            x = nn.Conv(
+                32,
+                kernel_size=(2, 2),
+                padding="VALID",
+                kernel_init=orthogonal(np.sqrt(2)),
+                bias_init=constant(0.0),
+            )(x)
+            x = nn.relu(x)
+            x = nn.Conv(
+                64,
+                kernel_size=(2, 2),
+                padding="VALID",
+                kernel_init=orthogonal(np.sqrt(2)),
+                bias_init=constant(0.0),
+            )(x)
+            x = nn.relu(x)
+        elif False:
             # For small grids, use smaller strides
             x = nn.Conv(
                 32,
@@ -142,11 +185,12 @@ class Network(nn.Module):
                 kernel_init=orthogonal(np.sqrt(2)),
                 bias_init=constant(0.0),
             )(x)
+            x = nn.relu(x)
         elif True:
             x = nn.Conv(
                 32,
-                kernel_size=(8, 8),
-                strides=(4, 4),
+                kernel_size=(4, 4),
+                strides=(2, 2),
                 padding="VALID",
                 kernel_init=orthogonal(np.sqrt(2)),
                 bias_init=constant(0.0),
@@ -170,7 +214,7 @@ class Network(nn.Module):
                 bias_init=constant(0.0),
             )(x)
             x = nn.relu(x)
-        elif True:
+        elif False:
             x = nn.Conv(
                 32,
                 kernel_size=(3, 3),
@@ -220,11 +264,11 @@ class Network(nn.Module):
             if self.maxpool_count >= 1:
                 x = nn.max_pool(x, window_shape=(3, 3), strides=(2, 2), padding="SAME")
         else:
-            channels = [16, 32, 64]
+            channels = [8, 16, 32]
             for channel in channels:
                 x = ConvSequence(channel)(x)
+            x = nn.relu(x)
 
-        x = nn.relu(x)
         x = x.reshape((x.shape[0], -1))
 
         x = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
@@ -237,10 +281,10 @@ class Network(nn.Module):
 class Critic(nn.Module):
     @nn.compact
     def __call__(self, x):
-        # x = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
-        #     x
-        # )
-        # x = nn.relu(x)
+        x = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
+            x
+        )
+        x = nn.relu(x)
         x = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
             x
         )
@@ -280,12 +324,14 @@ class Actor(nn.Module):
 
         # Handle regular categorical actions
         for dim in self.action_dims:
+            # for dim in [self.action_dims[0]]:
             head = nn.Dense(dim, kernel_init=orthogonal(0.01), bias_init=constant(0.0))(
                 x
             )
             logits.append(head)
 
         # Handle "choose k" actions
+        # if False and len(self.choose_k) > 0:
         if len(self.choose_k) > 0:
             for n, k in self.choose_k:
                 # Calculate number of possible combinations (n choose k)
@@ -447,7 +493,13 @@ def run_rollout_loop(
 
     @jax.jit
     def step_env_wrapped(current_episode_stats, action, obs, info):
-        step_tuple = env.stateless_step(action, obs, info)
+        hard_coded_actions = jax.vmap(lambda x: jnp.append(x, jnp.array([1, 0])))(
+            action
+        )
+        if IS_FIRE_FIGHTER:
+            step_tuple = env.stateless_step(action, obs, info)
+        else:
+            step_tuple = env.step(action[0][0])
         (
             next_obs,
             reward,
@@ -642,12 +694,19 @@ def run_rollout_loop(
     network = Network(
         conv_count=args.exp.conv_count, maxpool_count=args.exp.maxpool_count
     )
-    actor = Actor(action_dims=env.action_space.nvec[0], choose_k=env.extension_choices)
+    if IS_FIRE_FIGHTER:
+        actor = Actor(
+            action_dims=env.action_space.nvec[0], choose_k=env.extension_choices
+        )
+    else:
+        actor = Actor(action_dims=[env.action_space.n], choose_k=[(2, 1)])
     critic = Critic()
 
     grid_sample, context = env.observation_space.sample()
+    grid_sample = jnp.expand_dims(grid_sample, 0)
     network_params = network.init(network_key, grid_sample)
     grid_sample, context = env.observation_space.sample()
+    grid_sample = jnp.expand_dims(grid_sample, 0)
     actor_params = actor.init(
         actor_key,
         network.apply(
@@ -656,6 +715,7 @@ def run_rollout_loop(
         ),
     )
     grid_sample, context = env.observation_space.sample()
+    grid_sample = jnp.expand_dims(grid_sample, 0)
     critic_params = critic.init(
         critic_key,
         network.apply(
@@ -1040,6 +1100,7 @@ def run_rollout_loop(
                 update_epoch, (agent_state, key), (), length=args.ppo.update_epochs
             )
         )
+
         return agent_state, loss, pg_loss, v_loss, entropy_loss, approx_kl, key
 
     # TRY NOT TO MODIFY: start the game
@@ -1280,14 +1341,15 @@ def run_rollout_loop(
             actions = jax.device_get(storage.actions)
 
             # Calculate percentages for each action type
-            movement_counts = np.bincount(actions[:, :, 0].flatten(), minlength=9)
-            movement_pcts = movement_counts / len(actions)
+            if False:
+                movement_counts = np.bincount(actions[:, :, 0].flatten(), minlength=9)
+                movement_pcts = movement_counts / len(actions)
 
-            bulldoze_counts = np.bincount(actions[:, :, 1].flatten(), minlength=2)
-            bulldoze_pcts = bulldoze_counts / len(actions)
+                bulldoze_counts = np.bincount(actions[:, :, 1].flatten(), minlength=2)
+                bulldoze_pcts = bulldoze_counts / len(actions)
 
-            extension_counts = np.bincount(actions[:, :, 2].flatten(), minlength=3)
-            extension_pcts = extension_counts / len(actions)
+                extension_counts = np.bincount(actions[:, :, 2].flatten(), minlength=3)
+                extension_pcts = extension_counts / len(actions)
 
             # print("\nAction Distributions:")
             # print(
