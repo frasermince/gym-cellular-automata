@@ -48,11 +48,24 @@ class RepeatCAJax(Operator):
             return (new_grid, action, new_per_env, new_shared)
 
         # ... in the main function ...
-        grid, _, new_per_env, _ = lax.fori_loop(
-            0,
-            jnp.asarray(reshaped_repeats, dtype=jnp.int32),
-            lambda i, carry: _ca_step(carry),
-            (grid, action, per_env_context, shared_context),
+        # jax.debug.callback(
+        #     repeats_printer,
+        #     (
+        #         jnp.array(
+        #             [
+        #                 reshaped_repeats,
+        #             ]
+        #         )
+        #     ),
+        # )
+        grid, _, new_per_env, _ = _ca_step(
+            (grid, action, per_env_context, shared_context)
         )
+        # grid, _, new_per_env, _ = lax.fori_loop(
+        #     0,
+        #     jnp.asarray(reshaped_repeats, dtype=jnp.int32),
+        #     lambda i, carry: _ca_step(carry),
+        #     (grid, action, per_env_context, shared_context),
+        # )
 
         return grid, (new_per_env, modf_accu_time)

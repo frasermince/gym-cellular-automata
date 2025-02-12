@@ -40,7 +40,6 @@ TITLE_ALIGN = "left"
 COLOR_EMPTY_DAY = "#DDD1D3"  # Gray
 COLOR_TREE_DAY = "#A9C499"  # Green
 COLOR_FIRE_DAY = "#E68181"  # Salmon-Red
-COLOR_BULLDOZED_DAY = "#B8860B"  # Dark Goldenrod
 COLOR_BURNED_DAY = "#8B0000"  # Dark Red
 COLOR_GAUGE_DAY = "#D4CCDB"  # Gray-Purple
 
@@ -48,7 +47,6 @@ COLOR_GAUGE_DAY = "#D4CCDB"  # Gray-Purple
 COLOR_EMPTY_NIGHT = "#696969"  # Darker Gray
 COLOR_TREE_NIGHT = "#2F4F4F"  # Dark Green
 COLOR_FIRE_NIGHT = "#8B0000"  # Dark Red
-COLOR_BULLDOZED_NIGHT = "#8B4513"  # Saddle Brown
 COLOR_BURNED_NIGHT = "#8B0000"  # Dark Red
 COLOR_GAUGE_NIGHT = "#483D8B"  # Dark Slate Blue
 
@@ -135,45 +133,38 @@ def render(
     empty,
     tree,
     fire,
-    bulldozed,
-    burned,
     title,
     grid,
     time,
     pos,
     cell_count,
     pos_fire,
+    dousing_counts,
     wind_index=None,
     is_night=0,
 ):
     EMPTY = empty
     TREE = tree
     FIRE = fire
-    BULLDOZED = bulldozed
-    BURNED = burned
     # Select color scheme based on is_night
     if is_night:
         COLOR_EMPTY = COLOR_EMPTY_NIGHT
         COLOR_TREE = COLOR_TREE_NIGHT
         COLOR_FIRE = COLOR_FIRE_NIGHT
-        COLOR_BULLDOZED = COLOR_BULLDOZED_NIGHT
-        COLOR_BURNED = COLOR_BURNED_NIGHT
         COLOR_GAUGE = COLOR_GAUGE_NIGHT
     else:
         COLOR_EMPTY = COLOR_EMPTY_DAY
         COLOR_TREE = COLOR_TREE_DAY
         COLOR_FIRE = COLOR_FIRE_DAY
-        COLOR_BULLDOZED = COLOR_BULLDOZED_DAY
-        COLOR_BURNED = COLOR_BURNED_DAY
         COLOR_GAUGE = COLOR_GAUGE_DAY
 
     # Assumes that cells values are in ascending order and paired with its colors
-    COLORS = [COLOR_EMPTY, COLOR_TREE, COLOR_BULLDOZED, COLOR_FIRE, COLOR_BURNED]
-    CELLS = [EMPTY, TREE, BULLDOZED, FIRE, BURNED]
+    COLORS = [COLOR_EMPTY, COLOR_TREE, COLOR_FIRE]
+    CELLS = [EMPTY, TREE, FIRE]
     NORM, CMAP = get_norm_cmap(CELLS, COLORS)
 
     # local_grid = moore_n(N_LOCAL, pos, grid, EMPTY)
-    pos_fseed = pos_fire
+    pos_fseed = pos_fire[0]
 
     # Why two titles?
     # The env was registered (benchmark) or
@@ -222,11 +213,34 @@ def render(
         )
 
     def plot_global(ax, grid, pos, pos_fseed):
+        # Calculate dousing effect
+        dousing_strength = np.minimum(dousing_counts, 3) / 3.0
+        water_tint = np.array([0.7, 0.7, 1.0])  # Slight blue tint
+
+        # Create a custom colormap for each cell type with water tint
+        colors_with_tint = []
+        for color in COLORS:
+            # Convert hex to RGB if needed
+            if isinstance(color, str):
+                color = np.array(plt.matplotlib.colors.to_rgb(color))
+
+            # Apply water tint where there is dousing
+            tinted_color = np.where(
+                dousing_counts[..., np.newaxis] > 0,
+                color * (1 - dousing_strength[..., np.newaxis])
+                + water_tint * dousing_strength[..., np.newaxis],
+                color,
+            )
+            colors_with_tint.append(tinted_color)
+
+        # Create new colormap with tinted colors
+        NORM, CMAP = get_norm_cmap(CELLS, colors_with_tint)
+
+        # Plot with tinted colormap
         ax.imshow(grid, interpolation="none", cmap=CMAP, norm=NORM)
 
         # Fire Seed
         markfire = align_marker(parse_svg_into_mpl(svg_paths.FIRE), valign="bottom")
-
         ax.plot(
             pos_fseed[1],
             pos_fseed[0],
@@ -239,7 +253,6 @@ def render(
         marklocation = align_marker(
             parse_svg_into_mpl(svg_paths.LOCATION), valign="bottom"
         )
-
         ax.plot(
             pos[1],
             pos[0],

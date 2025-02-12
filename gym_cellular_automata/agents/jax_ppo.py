@@ -22,14 +22,33 @@ import math
 from gym_cellular_automata.agents.args import Args
 from functools import partial
 
+IS_FIRE_FIGHTER = True
 
-def policy_printer(args):
-    policy_loss = args[0]
-    if policy_loss == 0.00:
-        import pdb
 
-        pdb.set_trace()
-    print(f"Policy Loss: {policy_loss:.2f}")
+def gae_printer(args):
+    value = args
+    print(f"Value: {value}")
+    # import pdb
+
+    # pdb.set_trace()
+
+
+def gae_once_printer(args):
+    advantages, values, curvalues, reward = args
+    print(f"Advantages: {advantages}")
+    print(f"Values: {values}")
+    print(f"Curvalues: {curvalues}")
+    print(f"Reward: {reward}")
+    # import pdb
+
+    # pdb.set_trace()
+
+
+def value_printer(args):
+    value, mb_returns = args
+    print(f"Value: {value}")
+    print(f"MB Returns: {mb_returns}")
+    print("Diff", value - mb_returns)
 
 
 def debug_printer(args):
@@ -51,9 +70,6 @@ def debug_printer(args):
     print(f"Learning Rate Fraction: {learning_rate_frac}")
 
 
-padding_type = "SAME"
-# padding_type = "VALID"
-
 if jax.devices()[0].platform == "tpu":
     jax.config.update("jax_platform_name", "tpu")
     jax.config.update("jax_enable_x64", False)  # Use float32/bfloat16 on TPU
@@ -65,18 +81,88 @@ SHARD_STORAGE = False
 SHOULD_SHARD = False
 # jax.config.update("jax_default_matmul_precision", "bfloat16")
 
+PADDING = "SAME"
+# PADDING = "VALID"
 
+
+class ResidualBlock(nn.Module):
+    channels: int
+
+    @nn.compact
+    def __call__(self, x):
+        inputs = x
+        x = nn.relu(x)
+        x = nn.Conv(
+            features=self.channels,
+            kernel_size=(3, 3),
+            padding="SAME",
+            kernel_init=orthogonal(np.sqrt(2)),
+            bias_init=constant(0.0),
+        )(x)
+        x = nn.relu(x)
+        x = nn.Conv(
+            features=self.channels,
+            kernel_size=(3, 3),
+            padding="SAME",
+            kernel_init=orthogonal(np.sqrt(2)),
+            bias_init=constant(0.0),
+        )(x)
+        return x + inputs
+
+
+class ConvSequence(nn.Module):
+    channels: int
+
+    @nn.compact
+    def __call__(self, x):
+        x = nn.Conv(features=self.channels, kernel_size=(3, 3), padding="SAME")(x)
+        x = nn.max_pool(x, window_shape=(3, 3), strides=(2, 2), padding="SAME")
+        x = ResidualBlock(channels=self.channels)(x)
+        x = ResidualBlock(channels=self.channels)(x)
+        return x
+
+
+# All of these if elses are very silly. This was just so I could try out different architectures.
 class Network(nn.Module):
+    conv_count: int = 3
+    maxpool_count: int = 2
+
     @nn.compact
     def __call__(self, grid):
         x = grid / 255.0
-        if grid.shape[1] <= 32:
+        # if grid.shape[1] < 32:
+        if not IS_FIRE_FIGHTER:
+            x = nn.Conv(
+                16,
+                kernel_size=(2, 2),
+                padding="VALID",
+                kernel_init=orthogonal(np.sqrt(2)),
+                bias_init=constant(0.0),
+            )(x)
+            x = nn.relu(x)
+            x = nn.Conv(
+                32,
+                kernel_size=(2, 2),
+                padding="VALID",
+                kernel_init=orthogonal(np.sqrt(2)),
+                bias_init=constant(0.0),
+            )(x)
+            x = nn.relu(x)
+            x = nn.Conv(
+                64,
+                kernel_size=(2, 2),
+                padding="VALID",
+                kernel_init=orthogonal(np.sqrt(2)),
+                bias_init=constant(0.0),
+            )(x)
+            x = nn.relu(x)
+        elif False:
             # For small grids, use smaller strides
             x = nn.Conv(
                 32,
                 kernel_size=(4, 4),
-                strides=(3, 3),  # Reduced stride
-                padding="VALID",
+                strides=(2, 2),  # Reduced stride
+                padding=PADDING,
                 kernel_init=orthogonal(np.sqrt(2)),
                 bias_init=constant(0.0),
             )(x)
@@ -85,15 +171,26 @@ class Network(nn.Module):
                 64,
                 kernel_size=(3, 3),
                 strides=(1, 1),  # Reduced stride
-                padding="VALID",
+                padding=PADDING,
                 kernel_init=orthogonal(np.sqrt(2)),
                 bias_init=constant(0.0),
             )(x)
-        else:
+
+            x = nn.relu(x)
+            x = nn.Conv(
+                64,
+                kernel_size=(2, 2),
+                strides=(1, 1),  # Reduced stride
+                padding=PADDING,
+                kernel_init=orthogonal(np.sqrt(2)),
+                bias_init=constant(0.0),
+            )(x)
+            x = nn.relu(x)
+        elif True:
             x = nn.Conv(
                 32,
-                kernel_size=(8, 8),
-                strides=(4, 4),
+                kernel_size=(4, 4),
+                strides=(2, 2),
                 padding="VALID",
                 kernel_init=orthogonal(np.sqrt(2)),
                 bias_init=constant(0.0),
@@ -116,11 +213,65 @@ class Network(nn.Module):
                 kernel_init=orthogonal(np.sqrt(2)),
                 bias_init=constant(0.0),
             )(x)
+            x = nn.relu(x)
+        elif False:
+            x = nn.Conv(
+                32,
+                kernel_size=(3, 3),
+                strides=(2, 2),
+                padding=PADDING,
+                kernel_init=orthogonal(np.sqrt(2)),
+                bias_init=constant(0.0),
+            )(x)
+            x = nn.relu(x)
 
-        x = nn.relu(x)
+            if self.conv_count >= 2:
+                x = nn.Conv(
+                    64,
+                    kernel_size=(3, 3),
+                    strides=(2, 2) if self.conv_count >= 3 else (1, 1),
+                    padding=PADDING,
+                    kernel_init=orthogonal(np.sqrt(2)),
+                    bias_init=constant(0.0),
+                )(x)
+                x = nn.relu(x)
+
+            if self.maxpool_count >= 2 and self.conv_count >= 3:
+                x = nn.max_pool(x, window_shape=(3, 3), strides=(2, 2), padding="SAME")
+
+            if self.conv_count >= 3:
+                x = nn.Conv(
+                    64,
+                    kernel_size=(3, 3),
+                    strides=(2, 2) if self.conv_count >= 4 else (1, 1),
+                    padding=PADDING,
+                    kernel_init=orthogonal(np.sqrt(2)),
+                    bias_init=constant(0.0),
+                )(x)
+                x = nn.relu(x)
+
+            if self.conv_count >= 4:
+                x = nn.Conv(
+                    64,
+                    kernel_size=(3, 3),
+                    strides=(1, 1),
+                    padding=PADDING,
+                    kernel_init=orthogonal(np.sqrt(2)),
+                    bias_init=constant(0.0),
+                )(x)
+                x = nn.relu(x)
+
+            if self.maxpool_count >= 1:
+                x = nn.max_pool(x, window_shape=(3, 3), strides=(2, 2), padding="SAME")
+        else:
+            channels = [8, 16, 32]
+            for channel in channels:
+                x = ConvSequence(channel)(x)
+            x = nn.relu(x)
+
         x = x.reshape((x.shape[0], -1))
 
-        x = nn.Dense(512, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
+        x = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
             x
         )
         x = nn.relu(x)
@@ -130,6 +281,14 @@ class Network(nn.Module):
 class Critic(nn.Module):
     @nn.compact
     def __call__(self, x):
+        x = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
+            x
+        )
+        x = nn.relu(x)
+        x = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
+            x
+        )
+        x = nn.relu(x)
         return nn.Dense(1, kernel_init=orthogonal(1), bias_init=constant(0.0))(x)
 
 
@@ -149,19 +308,30 @@ class Actor(nn.Module):
         #     64, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0)
         # )(features)
         # features = nn.relu(features)
-        features = x
+
+        # x = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
+        #     x
+        # )
+        # x = nn.relu(x)
+
+        x = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
+            x
+        )
+        x = nn.relu(x)
 
         # Create logits for each action dimension
         logits = []
 
         # Handle regular categorical actions
         for dim in self.action_dims:
+            # for dim in [self.action_dims[0]]:
             head = nn.Dense(dim, kernel_init=orthogonal(0.01), bias_init=constant(0.0))(
-                features
+                x
             )
             logits.append(head)
 
         # Handle "choose k" actions
+        # if False and len(self.choose_k) > 0:
         if len(self.choose_k) > 0:
             for n, k in self.choose_k:
                 # Calculate number of possible combinations (n choose k)
@@ -170,7 +340,7 @@ class Actor(nn.Module):
                     num_combinations,
                     kernel_init=orthogonal(0.01),
                     bias_init=constant(0.0),
-                )(features)
+                )(x)
                 logits.append(head)
 
         return logits
@@ -251,7 +421,7 @@ def run_rollout_loop(
     host = os.environ.get("EXTENDED_MIND_HOST", "")
     if not host:
         host = "local"
-    run_name = f"{args.env.env_id}__lr={args.ppo.learning_rate}__host={host}__seed={args.exp.seed}__speed={args.env.speed_multiplier}__size={args.env.size}__{int(time.time())}"
+    run_name = f"{args.env.env_id}__lr={args.ppo.learning_rate}__host={host}__={args.exp.description}__seed={args.exp.seed}__speed={args.env.speed_multiplier}__size={args.env.size}__{int(time.time())}"
     checkpoint_options = orbax.checkpoint.CheckpointManagerOptions(
         max_to_keep=2, create=True
     )
@@ -279,6 +449,8 @@ def run_rollout_loop(
         "|param|value|\n|-|-|\n%s"
         % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
     )
+
+    writer.add_text("experiment_description", args.exp.description)
 
     # TRY NOT TO MODIFY: seeding
     random.seed(args.exp.seed)
@@ -321,7 +493,13 @@ def run_rollout_loop(
 
     @jax.jit
     def step_env_wrapped(current_episode_stats, action, obs, info):
-        step_tuple = env.stateless_step(action, obs, info)
+        hard_coded_actions = jax.vmap(lambda x: jnp.append(x, jnp.array([1, 0])))(
+            action
+        )
+        if IS_FIRE_FIGHTER:
+            step_tuple = env.stateless_step(action, obs, info)
+        else:
+            step_tuple = env.step(action[0][0])
         (
             next_obs,
             reward,
@@ -513,13 +691,22 @@ def run_rollout_loop(
         # )
         return args.ppo.learning_rate * frac
 
-    network = Network()
-    actor = Actor(action_dims=env.action_space.nvec[0], choose_k=env.extension_choices)
+    network = Network(
+        conv_count=args.exp.conv_count, maxpool_count=args.exp.maxpool_count
+    )
+    if IS_FIRE_FIGHTER:
+        actor = Actor(
+            action_dims=env.action_space.nvec[0], choose_k=env.extension_choices
+        )
+    else:
+        actor = Actor(action_dims=[env.action_space.n], choose_k=[(2, 1)])
     critic = Critic()
 
     grid_sample, context = env.observation_space.sample()
+    grid_sample = jnp.expand_dims(grid_sample, 0)
     network_params = network.init(network_key, grid_sample)
     grid_sample, context = env.observation_space.sample()
+    grid_sample = jnp.expand_dims(grid_sample, 0)
     actor_params = actor.init(
         actor_key,
         network.apply(
@@ -528,6 +715,7 @@ def run_rollout_loop(
         ),
     )
     grid_sample, context = env.observation_space.sample()
+    grid_sample = jnp.expand_dims(grid_sample, 0)
     critic_params = critic.init(
         critic_key,
         network.apply(
@@ -535,6 +723,30 @@ def run_rollout_loop(
             grid_sample,
         ),
     )
+    writer.add_scalar(
+        "charts/network_params", sum(x.size for x in jax.tree_leaves(network_params)), 0
+    )
+    writer.add_scalar(
+        "charts/actor_params", sum(x.size for x in jax.tree_leaves(actor_params)), 0
+    )
+    writer.add_scalar(
+        "charts/critic_params", sum(x.size for x in jax.tree_leaves(critic_params)), 0
+    )
+    # Log network architectures to wandb
+    if args.exp.track:
+        wandb.config.update(
+            {
+                "network_architecture": {
+                    "network": network.tabulate(network_key, grid_sample),
+                    "actor": actor.tabulate(
+                        actor_key, network.apply(network_params, grid_sample)
+                    ),
+                    "critic": critic.tabulate(
+                        critic_key, network.apply(network_params, grid_sample)
+                    ),
+                }
+            }
+        )
     print(
         sum(x.size for x in jax.tree_leaves(network_params)),
         sum(x.size for x in jax.tree_leaves(actor_params)),
@@ -640,22 +852,6 @@ def run_rollout_loop(
         recording_contexts["time"] = jax.device_put(
             jnp.zeros((args.exp.num_ppo_steps,) + context["time"].shape),
         )
-    storage = Storage(
-        grid_obs=jnp.zeros((args.exp.num_ppo_steps,) + grid.shape),
-        position_obs=jnp.zeros(
-            (args.exp.num_ppo_steps,) + context["position"].shape, dtype=jnp.int32
-        ),
-        actions=jnp.zeros(
-            (args.exp.num_ppo_steps,) + env.total_action_space.shape,
-            dtype=jnp.int32,
-        ),
-        logprobs=jnp.zeros((args.exp.num_ppo_steps, *env.total_action_space.shape)),
-        dones=jnp.zeros((args.exp.num_ppo_steps, args.env.num_envs)),
-        values=jnp.zeros((args.exp.num_ppo_steps, args.env.num_envs)),
-        advantages=jnp.zeros((args.exp.num_ppo_steps, args.env.num_envs)),
-        returns=jnp.zeros((args.exp.num_ppo_steps, args.env.num_envs)),
-        rewards=jnp.zeros((args.exp.num_ppo_steps, args.env.num_envs)),
-    )
 
     @jax.jit
     def get_action_and_value(
@@ -723,9 +919,23 @@ def run_rollout_loop(
         value = critic.apply(params["critic_params"], hidden).squeeze()
         return logprobs, entropies, value
 
+    @jax.jit
     def compute_gae_once(carry, inp, gamma, gae_lambda):
         advantages = carry
         nextdone, nextvalues, curvalues, reward = inp
+        # jax.debug.callback(
+        #     gae_once_printer,
+        #     (
+        #         jnp.array(
+        #             [
+        #                 advantages,
+        #                 nextvalues,
+        #                 curvalues,
+        #                 reward,
+        #             ]
+        #         )
+        #     ),
+        # )
         nextnonterminal = 1.0 - nextdone
 
         delta = reward + gamma * nextvalues * nextnonterminal - curvalues
@@ -786,6 +996,17 @@ def run_rollout_loop(
         # Take mean across both batch and action dimensions
         pg_loss = jnp.maximum(pg_loss1, pg_loss2).mean()
 
+        # jax.debug.callback(
+        #     value_printer,
+        #     (
+        #         jnp.array(
+        #             [
+        #                 newvalue,
+        #                 mb_returns,
+        #             ]
+        #         )
+        #     ),
+        # )
         # Value loss
         if args.ppo.clip_vloss:
             v_loss_unclipped = 0.5 * ((newvalue - mb_returns) ** 2).mean()
@@ -879,6 +1100,7 @@ def run_rollout_loop(
                 update_epoch, (agent_state, key), (), length=args.ppo.update_epochs
             )
         )
+
         return agent_state, loss, pg_loss, v_loss, entropy_loss, approx_kl, key
 
     # TRY NOT TO MODIFY: start the game
@@ -1021,6 +1243,7 @@ def run_rollout_loop(
         },
     )
     storage_returns = []
+    last_4_grid_storages = []
     action_count = [0 for i in range(9)]
     with orbax.checkpoint.CheckpointManager(
         "/tmp/flax_ckpt/orbax/managed",
@@ -1078,6 +1301,9 @@ def run_rollout_loop(
                         build_storage_return(storage, recording_contexts, env)
                     )
             storage = compute_gae(agent_state, next_obs, next_done, storage)
+            last_4_grid_storages.append(storage.grid_obs)
+            if len(last_4_grid_storages) > 4:
+                last_4_grid_storages.pop(0)
 
             agent_state, loss, pg_loss, v_loss, entropy_loss, approx_kl, key = (
                 update_ppo(
@@ -1115,14 +1341,15 @@ def run_rollout_loop(
             actions = jax.device_get(storage.actions)
 
             # Calculate percentages for each action type
-            movement_counts = np.bincount(actions[:, :, 0].flatten(), minlength=9)
-            movement_pcts = movement_counts / len(actions)
+            if False:
+                movement_counts = np.bincount(actions[:, :, 0].flatten(), minlength=9)
+                movement_pcts = movement_counts / len(actions)
 
-            bulldoze_counts = np.bincount(actions[:, :, 1].flatten(), minlength=2)
-            bulldoze_pcts = bulldoze_counts / len(actions)
+                bulldoze_counts = np.bincount(actions[:, :, 1].flatten(), minlength=2)
+                bulldoze_pcts = bulldoze_counts / len(actions)
 
-            extension_counts = np.bincount(actions[:, :, 2].flatten(), minlength=3)
-            extension_pcts = extension_counts / len(actions)
+                extension_counts = np.bincount(actions[:, :, 2].flatten(), minlength=3)
+                extension_pcts = extension_counts / len(actions)
 
             # print("\nAction Distributions:")
             # print(
@@ -1272,6 +1499,16 @@ def run_rollout_loop(
                 },
                 refresh=True,
             )
+            if iteration % 500 == 0 or iteration == 5:
+                frames = []
+                for grid_storage in last_4_grid_storages:
+                    for i in range(grid_storage.shape[0]):
+                        frames.append(grid_storage[i, 0])
+                fps = 1000 / 80
+                frames = np.stack(frames)
+                frames = frames.transpose(0, 3, 1, 2)
+                wandb.log({"video": wandb.Video(frames, fps=fps)})
+
             if iteration % 200 == 0 or iteration == 1:
                 # Save model parameters using checkpoint manager
                 checkpoint_manager.save(
