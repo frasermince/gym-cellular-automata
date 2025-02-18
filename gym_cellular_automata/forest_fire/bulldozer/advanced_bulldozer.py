@@ -137,7 +137,7 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
             "zoom",
         ]
         self._reward_per_tree = 1
-        self._reward_per_empty = -1
+        self._reward_per_empty = 0
         self._reward_per_fire = -1
 
         self.num_envs = num_envs
@@ -569,29 +569,65 @@ class AdvancedForestFireBulldozerEnv(CAEnv):
     #     raw_reward = 1 + base_reward - time_penalty
     #     return jnp.tanh(raw_reward)
 
+    # Expected reward 176
+    # def _award(self, grid):
+    #     ncells = grid.shape[0] * grid.shape[1]
+
+    #     dict_counts = self.count_cells(grid)
+
+    #     cell_counts = jnp.array(
+    #         [
+    #             dict_counts[self._empty],
+    #             dict_counts[self._tree],
+    #             dict_counts[self._fire],
+    #         ]
+    #     )
+
+    #     cell_counts_relative = cell_counts / ncells
+
+    #     reward_weights = jnp.array(
+    #         [
+    #             self._reward_per_empty,
+    #             self._reward_per_tree,
+    #             self._reward_per_fire,
+    #         ]
+    #     )
+    #     return jnp.dot(reward_weights, cell_counts_relative)
+    # Expected reward -15.558
     def _award(self, grid):
-        ncells = grid.shape[0] * grid.shape[1]
+        """Reward Function
 
-        dict_counts = self.count_cells(grid)
+        Negative Ratio of Burning Area per Total Flammable Area
 
-        cell_counts = jnp.array(
-            [
-                dict_counts[self._empty],
-                dict_counts[self._tree],
-                dict_counts[self._fire],
-            ]
-        )
+        -(f / (t + f))
+        Where:
+            t: tree cell counts
+            f: fire cell counts
 
-        cell_counts_relative = cell_counts / ncells
+        Objective:
+        Keep as much forest as possible.
 
-        reward_weights = jnp.array(
-            [
-                self._reward_per_empty,
-                self._reward_per_tree,
-                self._reward_per_fire,
-            ]
-        )
-        return (jnp.dot(reward_weights, cell_counts_relative) - 1) / 2
+        Advantages:
+        1. Easy to interpret.
+            + Percent of the forest lost at each step.
+        2. Terminate ASAP.
+            + As the reward is negative.
+        3. Built-in cost of action.
+            + The agent removes trees, this decreases the reward.
+        4. Shaped reward.
+            + Reward is given at each step.
+
+        Disadvantages:
+        1. Lack of experimental results.
+        2. Is it equivalent with Sparse Reward?
+
+        The sparse reward is alive trees at epidose's end:
+        t / (e + t + f)
+        """
+        counts = self.count_cells(grid)
+        t = counts[self._tree]
+        f = counts[self._fire]
+        return -(f / (t + f + 1e-8))
 
     def _is_done(self, grid):
         return jnp.invert(jnp.any(grid == self._fire))

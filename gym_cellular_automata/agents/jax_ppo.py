@@ -186,7 +186,7 @@ class Network(nn.Module):
                 bias_init=constant(0.0),
             )(x)
             x = nn.relu(x)
-        elif True:
+        elif False:
             x = nn.Conv(
                 32,
                 kernel_size=(4, 4),
@@ -264,7 +264,17 @@ class Network(nn.Module):
             if self.maxpool_count >= 1:
                 x = nn.max_pool(x, window_shape=(3, 3), strides=(2, 2), padding="SAME")
         else:
-            channels = [8, 16, 32]
+            x = nn.Conv(
+                64,
+                kernel_size=(5, 5),
+                strides=(2, 2),
+                padding="VALID",
+                kernel_init=orthogonal(np.sqrt(2)),
+                bias_init=constant(0.0),
+            )(x)
+            x = nn.relu(x)
+
+            channels = [16, 32, 64]
             for channel in channels:
                 x = ConvSequence(channel)(x)
             x = nn.relu(x)
@@ -309,10 +319,10 @@ class Actor(nn.Module):
         # )(features)
         # features = nn.relu(features)
 
-        # x = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
-        #     x
-        # )
-        # x = nn.relu(x)
+        x = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
+            x
+        )
+        x = nn.relu(x)
 
         x = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(
             x
@@ -1246,7 +1256,7 @@ def run_rollout_loop(
     last_4_grid_storages = []
     action_count = [0 for i in range(9)]
     with orbax.checkpoint.CheckpointManager(
-        "/tmp/flax_ckpt/orbax/managed",
+        f"/tmp/flax_ckpt/orbax/managed/{run_name}",
         options=checkpoint_options,
         handler_registry=registry,
     ) as checkpoint_manager:
